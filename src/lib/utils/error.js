@@ -9,8 +9,6 @@
  *   }
  */
 
-import { toast } from '../stores/toast.svelte.js';
-
 /**
  * 统一应用错误类
  * 标准化 Tauri 字符串错误 和 浏览器 Error 对象
@@ -188,7 +186,7 @@ export function swallowError(context, err) {
 /**
  * 分类错误并显示对应 toast。
  */
-export function handleErrorWithToast(fallbackMessage, err) {
+export function handleErrorWithToast(fallbackMessage, err, toast) {
   const kind = classifyError(err)
   const msg = err?.message || fallbackMessage
   if (!toast) {

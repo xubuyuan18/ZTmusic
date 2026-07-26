@@ -25,6 +25,8 @@ assertEqual(getApiCacheTtl('/login/status', 'GET'), 0, 'does not cache login sta
 assertEqual(getApiCacheTtl('/playlist/track/all', 'GET'), 30 * 60 * 1000, 'keeps playlist tracks cache TTL')
 assertEqual(getApiCacheTtl('/playlist/track/all', 'POST'), 0, 'does not cache non-GET requests')
 assertEqual(getApiCacheTtl('/playlist/track/all', 'GET', { cache: false }), 0, 'respects explicit cache=false')
+assertEqual(getApiCacheTtl('/playlist/track/all', 'GET', { cacheTtl: 1234 }), 1234, 'respects a custom cache TTL')
+assertEqual(getApiCacheTtl('/playlist/track/all', 'GET', { cacheTtl: 0 }), 0, 'allows a custom TTL to disable caching')
 assertEqual(getApiCacheTtl('/unknown', 'GET'), 0, 'unknown endpoints are uncached')
 
 console.log(`\n${passed} passed, ${failed} failed${failed ? ' - FAIL' : ' - all good'}`)
