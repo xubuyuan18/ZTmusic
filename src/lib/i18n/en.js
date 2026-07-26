@@ -7,7 +7,7 @@ export const en = {
   'settings.defaultPageDesc': 'Page shown on startup',
   'settings.restoreSession': 'Restore Session',
   'settings.restoreSessionDesc': 'Resume playback on startup',
-  'settings.clearHistory': 'Clear Play History',
+  'settings.clearHistory': 'Clear Playback History',
   'settings.clearHistoryDesc': 'Delete all local play records',
   'settings.clear': 'Clear',
   'page.home': 'Home',

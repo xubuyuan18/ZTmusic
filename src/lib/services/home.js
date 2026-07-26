@@ -1,6 +1,7 @@
 import { normalizeLocalHistorySong, normalizePlaylist } from '../utils/normalize.js'
 import { formatPlayCount } from '../format.js'
 import { handleErrorWithToast } from '../utils/error.js'
+import { toast } from '../stores/toast.svelte.js'
 
 function settledValue(result, fallback = null) {
   return result.status === 'fulfilled' ? result.value : fallback
@@ -91,7 +92,7 @@ export async function loadHomeData(ncm, user) {
   }
 
   const plRes = await ncm.userPlaylist(uid).catch((err) => {
-    handleErrorWithToast('歌单加载失败', err)
+    handleErrorWithToast('歌单加载失败', err, toast)
     return { playlist: [] }
   })
   const allPlaylists = (plRes.playlist || []).slice(0, 50)
