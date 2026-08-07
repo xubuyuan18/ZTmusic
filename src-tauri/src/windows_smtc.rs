@@ -229,7 +229,11 @@ fn run_smtc(
                 // 时间轴: SMTC 客户端(Lyricify 等)与系统媒体浮窗靠它同步歌词/进度条。
                 // TimeSpan 单位为 100ns,秒 = 1e7 tick。
                 let duration = duration.max(0.0);
-                let position = position.max(0.0).min(duration.max(position.max(0.0)));
+                let position = if duration > 0.0 {
+                    position.max(0.0).min(duration)
+                } else {
+                    position.max(0.0)
+                };
                 let timeline = SystemMediaTransportControlsTimelineProperties::new()?;
                 timeline.SetEndTime(TimeSpan {
                     Duration: (duration * 10_000_000.0) as i64,
