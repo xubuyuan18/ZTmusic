@@ -130,8 +130,10 @@ fn run_smtc(
 ) -> windows::core::Result<()> {
     // COM 在外层线程入口已初始化一次，本函数不再重复初始化。
 
-    // Create a MediaPlayer - this automatically creates the SMTC integration
+    // MediaPlayer 只作为桌面 SMTC host，实际音频仍由 WebView 播放。
     let player = MediaPlayer::new()?;
+    // 手动控制 SMTC 时关闭 MediaPlayer 自带的自动 CommandManager，避免第二套自动集成。
+    player.CommandManager()?.SetIsEnabled(false)?;
 
     // Get the SystemMediaTransportControls
     let smtc = player.SystemMediaTransportControls()?;
