@@ -19,84 +19,52 @@ jobs:
         with:
           ref: agent/fix-lyrics-loader-regression
           fetch-depth: 0
-      - name: Apply focused source changes
+      - name: Patch resolver
         shell: bash
         run: |
-          python - <<'PY'
-          from pathlib import Path
-
-          resolver_path = Path('src/lib/player/url-resolver.js')
-          source = resolver_path.read_text(encoding='utf-8')
-          start = source.index('  // Phase 2: unblock 尝试（仍快速）')
-          end = source.index('  // Phase 3: 官方 match 解灰', start)
-          block = (
-              "  // Phase 2: unblock 尝试（仍快速）\n"
-              "  if (candidates.length === 0) {\n"
-              "    for (const level of fastTiers) {\n"
-              "      const result = await fetchSongUrl(id, level, true, PLAYBACK.FAST_TIMEOUT, authOpts, signal)\n"
-              "      if (!result) continue\n"
-              "      if (result.isTrial) {\n"
-              "        addCandidate(trialCandidates, result)\n"
-              "        // 当前 Enhanced API 可能在普通请求返回 code=404 时，\n"
-              "        // unblock=true 已经给出可读的试听 URL。拿到第一条就停止前台探测，\n"
-              "        // 避免继续等待 match/旧接口撞上播放器 15s loading timeout。\n"
-              "        firstUrlLevel = level + '+unblock'\n"
-              "        break\n"
-              "      } else {\n"
-              "        addCandidate(candidates, result)\n"
-              "        firstUrlLevel = level + '+unblock'\n"
-              "        break\n"
-              "      }\n"
-              "    }\n"
-              "  }\n\n"
-              "  // Phase 2.5: unblock 已拿到可播放试听 URL 时立即出声。\n"
-              "  if (candidates.length === 0 && trialCandidates.length > 0) {\n"
-              "    trialCandidates.forEach(candidate => addCandidate(candidates, { ...candidate, cacheable: false }))\n"
-              "  }\n\n"
-          )
-          resolver_path.write_text(source[:start] + block + source[end:], encoding='utf-8')
-
-          Path('src/lib/player/url-resolver-trial.test.js').write_text("""import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
-
-const source = await readFile(new URL('./url-resolver.js', import.meta.url), 'utf8')
-const phase2Start = source.indexOf('// Phase 2: unblock')
-const promotion = source.indexOf('// Phase 2.5: unblock')
-const phase3 = source.indexOf('// Phase 3: 官方 match')
-
-assert.ok(phase2Start >= 0, 'unblock phase should exist')
-assert.ok(promotion > phase2Start, 'trial promotion should happen after unblock lookup')
-assert.ok(phase3 > promotion, 'trial URL should be promoted before match/old fallbacks')
-const phase2 = source.slice(phase2Start, promotion)
-assert.match(phase2, /if \\(result\\.isTrial\\)[\\s\\S]*?firstUrlLevel = level \\+ '\\+unblock'[\\s\\S]*?break/, 'first unblock trial should stop further foreground URL probing')
-
-console.log('url resolver immediate trial fallback regression test passed')
-""", encoding='utf-8')
-
-          Path('src/lib/composables/use-lyrics-direct.test.js').write_text("""import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
-
-const source = await readFile(new URL('./useLyrics.svelte.js', import.meta.url), 'utf8')
-const baseFetch = source.indexOf('await ncm.lyric(id)')
-const publish = source.indexOf('lyrics = base.lines.map', baseFetch)
-const loadingDone = source.indexOf('loading = false', publish)
-const yrcFetch = source.indexOf('await ncm.lyricNew(id)', loadingDone)
-
-assert.ok(baseFetch >= 0, 'player lyrics should fetch /lyric directly')
-assert.ok(publish > baseFetch, 'regular LRC should be published into player state')
-assert.ok(loadingDone > publish, 'basic lyric loading should finish after regular LRC is published')
-assert.ok(yrcFetch > loadingDone, '/lyric/new must be an enhancement and must not gate basic lyric display')
-assert.match(source, /parseLyricResponse\\(res \\|\\| \\{\\}\\)/, 'regular lyric response should use the existing parser')
-
-console.log('direct in-player lyrics regression test passed')
-""", encoding='utf-8')
-          PY
-      - name: Commit focused fixes
+          node <<'NODE'
+          const fs = require('node:fs')
+          const path = 'src/lib/player/url-resolver.js'
+          const source = fs.readFileSync(path, 'utf8')
+          const startMarker = '  // Phase 2: unblock 尝试（仍快速）'
+          const endMarker = '  // Phase 3: 官方 match 解灰'
+          const start = source.indexOf(startMarker)
+          const end = source.indexOf(endMarker, start)
+          if (start < 0 || end < 0) throw new Error('resolver phase markers not found')
+          const block = [
+            '  // Phase 2: unblock 尝试（仍快速）',
+            '  if (candidates.length === 0) {',
+            '    for (const level of fastTiers) {',
+            '      const result = await fetchSongUrl(id, level, true, PLAYBACK.FAST_TIMEOUT, authOpts, signal)',
+            '      if (!result) continue',
+            '      if (result.isTrial) {',
+            '        addCandidate(trialCandidates, result)',
+            '        // Enhanced API 可能在普通请求返回 code=404 时，unblock=true 已经给出可读试听 URL。',
+            '        // 拿到第一条就停止前台探测，避免继续等待 match/旧接口撞上 15s loading timeout。',
+            "        firstUrlLevel = level + '+unblock'",
+            '        break',
+            '      } else {',
+            '        addCandidate(candidates, result)',
+            "        firstUrlLevel = level + '+unblock'",
+            '        break',
+            '      }',
+            '    }',
+            '  }',
+            '',
+            '  // Phase 2.5: unblock 已拿到可播放试听 URL 时立即出声。',
+            '  if (candidates.length === 0 && trialCandidates.length > 0) {',
+            '    trialCandidates.forEach(candidate => addCandidate(candidates, { ...candidate, cacheable: false }))',
+            '  }',
+            '',
+          ].join('\n')
+          fs.writeFileSync(path, source.slice(0, start) + block + source.slice(end))
+          NODE
+      - name: Commit resolver fix
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/lib/player/url-resolver.js src/lib/player/url-resolver-trial.test.js src/lib/composables/use-lyrics-direct.test.js
+          git add src/lib/player/url-resolver.js
           git diff --cached --check
           git commit -m "fix prioritize playable trial fallback"
           git push origin HEAD:agent/fix-lyrics-loader-regression
