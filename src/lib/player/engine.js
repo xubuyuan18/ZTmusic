@@ -193,6 +193,13 @@ class AudioEngine {
     this.audio.currentTime = Math.max(0, time)
   }
 
+  /** 停止并释放当前/预加载音频，但保留事件订阅与音量配置。 */
+  reset() {
+    this.cancelPreload()
+    this._resetAudio(this.audio)
+    this.currentUrl = ''
+  }
+
   setVolume(v) {
     this.audio.volume = Math.max(0, Math.min(1, v))
   }
@@ -213,10 +220,8 @@ class AudioEngine {
 
   destroy() {
     this.pause()
-    this.cancelPreload()
     this._unbindActiveAudio(this.audio)
-    this._resetAudio(this.audio)
-    this.currentUrl = ''
+    this.reset()
     for (const listeners of Object.values(this._listeners)) listeners.clear()
   }
 }
