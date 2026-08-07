@@ -15,4 +15,11 @@ assert.match(clearSection, /this\.currentTime = 0/, 'clearing the last track sho
 assert.match(clearSection, /navigator\.mediaSession\.metadata = null/, 'clearing the last track should clear Web Media Session metadata')
 assert.match(clearSection, /syncNativeMedia\(\)/, 'clearing the last track should clear native media state too')
 
-console.log('player lifecycle source regression tests passed')
+const nativeMetadataSection = source.match(/getMetadata: \(\) => \(\{[\s\S]*?\}\),/)?.[0] || ''
+assert.match(nativeMetadataSection, /album: this\.currentTrack\?\.al\?\.name \|\| ''/, 'native metadata should include album name')
+
+const nativeButtonSection = source.match(/_handleMediaButton\(action\) \{[\s\S]*?\n  \}/)?.[0] || ''
+assert.match(nativeButtonSection, /action\.startsWith\('seek:'\)/, 'native media actions should support seek requests')
+assert.match(nativeButtonSection, /this\.seek\(seconds\)/, 'native seek requests should use PlayerState.seek')
+
+console.log('player lifecycle and native media source regression tests passed')
