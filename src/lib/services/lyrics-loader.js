@@ -12,7 +12,28 @@ function normalizeLyricLine(line) {
   }
 }
 
-export function createLyricsLoader(fetchLyrics, maxEntries = DEFAULT_CACHE_SIZE) {
+function normalizeYrcLine(line) {
+  const text = line?.text?.trim() || ''
+  return {
+    time: line.time,
+    text,
+    translation: '',
+  }
+}
+
+function parseDisplayLines(response) {
+  const parsed = parseLyricResponse(response || {})
+  const lines = parsed.lines
+    .map(normalizeLyricLine)
+    .filter((line) => line.text)
+  if (lines.length > 0) return lines
+
+  return parsed.yrcLines
+    .map(normalizeYrcLine)
+    .filter((line) => line.text)
+}
+
+export function createLyricsLoader(fetchLyrics, maxEntries = DEFAULT_CACHE_SIZE, fetchLyricsNew = null) {
   const cache = new Map()
   const pending = new Map()
 
@@ -41,10 +62,18 @@ export function createLyricsLoader(fetchLyrics, maxEntries = DEFAULT_CACHE_SIZE)
     }
 
     const request = Promise.resolve(fetchLyrics(id))
-      .then((response) => parseLyricResponse(response || {}).lines
-        .map(normalizeLyricLine)
-        .filter((line) => line.text))
-      .then((lines) => set(id, lines))
+      .then(parseDisplayLines)
+      .then(async (lines) => {
+        if (lines.length > 0 || !fetchLyricsNew) return lines
+        const fallbackResponse = await fetchLyricsNew(id)
+        return parseDisplayLines(fallbackResponse)
+      })
+      .then((lines) => {
+        // Do not cache an empty result. A transient API response must not pin
+        // the track to "暂无歌词" for the rest of the app session.
+        if (lines.length > 0) set(id, lines)
+        return lines
+      })
       .finally(() => {
         if (pending.get(id) === request) pending.delete(id)
       })
@@ -61,7 +90,11 @@ export function createLyricsLoader(fetchLyrics, maxEntries = DEFAULT_CACHE_SIZE)
   return { load, get, clear }
 }
 
-const sharedLyricsLoader = createLyricsLoader((id) => ncm.lyric(id))
+const sharedLyricsLoader = createLyricsLoader(
+  (id) => ncm.lyric(id),
+  DEFAULT_CACHE_SIZE,
+  (id) => ncm.lyricNew(id),
+)
 
 export const loadLyrics = (id, options) => sharedLyricsLoader.load(id, options)
 export const getCachedLyrics = (id) => sharedLyricsLoader.get(id)
