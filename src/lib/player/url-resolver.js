@@ -359,6 +359,10 @@ export async function getPlayableUrls(id, preferredLevel, prefetchCache, reqId, 
       if (!result) continue
       if (result.isTrial) {
         addCandidate(trialCandidates, result)
+        // Enhanced API 可能在普通请求返回 code=404 时，unblock=true 已经给出可读试听 URL。
+        // 拿到第一条就停止前台探测，避免继续等待 match/旧接口撞上 15s loading timeout。
+        firstUrlLevel = level + '+unblock'
+        break
       } else {
         addCandidate(candidates, result)
         firstUrlLevel = level + '+unblock'
@@ -367,6 +371,17 @@ export async function getPlayableUrls(id, preferredLevel, prefetchCache, reqId, 
     }
   }
 
+  // Phase 2.5: 已有可播放试听 URL 时，只给 match 一个很短的完整音源机会。
+  // 快速 match 成功则保留原有“完整音源优先”；否则立即使用试听，避免撞上 15s loading timeout。
+  if (candidates.length === 0 && trialCandidates.length > 0) {
+    const matched = await fetchMatchedSongUrl(id, Math.min(PLAYBACK.FAST_TIMEOUT, 800), signal)
+    if (matched?.url) {
+      addCandidate(candidates, matched)
+      firstUrlLevel = 'match'
+    } else {
+      trialCandidates.forEach(candidate => addCandidate(candidates, { ...candidate, cacheable: false }))
+    }
+  }
   // Phase 3: 官方 match 解灰
   if (candidates.length === 0) {
     const matched = await fetchMatchedSongUrl(id, PLAYBACK.FAST_TIMEOUT, signal)

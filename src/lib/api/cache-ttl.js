@@ -7,8 +7,12 @@ const CACHE_TTL = {
   '/vip/info': 0,
   '/vip/info/v2': 0,
   '/login/status': 0,
-  '/lyric': 7 * 24 * 60 * MINUTE,
-  '/lyric/new': 7 * 24 * 60 * MINUTE,
+  // Lyrics previously used a 7-day persistent API cache. A transient empty
+  // response could therefore keep the in-app player stuck on “暂无歌词” across
+  // app restarts/upgrades even after the backend recovered. Lyrics have their
+  // own higher-level successful-result cache, so keep the transport layer live.
+  '/lyric': 0,
+  '/lyric/new': 0,
   '/song/detail': 24 * 60 * MINUTE,
   '/playlist/detail': 30 * MINUTE,
   '/playlist/track/all': 30 * MINUTE,
