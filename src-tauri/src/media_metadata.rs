@@ -11,6 +11,7 @@ pub fn updateMetadata(
     state: State<'_, NativeMediaState>,
     title: String,
     artist: String,
+    album: String,
     coverUrl: String,
     duration: f64,
 ) -> Result<(), String> {
@@ -30,25 +31,26 @@ pub fn updateMetadata(
                 )
                 .map_err(|error| error.to_string())?;
         }
+        let _ = album;
     }
 
     #[cfg(target_os = "linux")]
     {
         state
             .mpris
-            .update_metadata(title, artist, coverUrl, duration);
+            .update_metadata(title, artist, album, coverUrl, duration);
     }
 
     #[cfg(target_os = "windows")]
     {
         state
             .smtc
-            .update_metadata(title, artist, coverUrl, duration);
+            .update_metadata(title, artist, album, coverUrl, duration);
     }
 
     #[cfg(not(any(target_os = "android", target_os = "linux", target_os = "windows")))]
     {
-        let _ = (state, title, artist, coverUrl, duration);
+        let _ = (state, title, artist, album, coverUrl, duration);
     }
 
     Ok(())
