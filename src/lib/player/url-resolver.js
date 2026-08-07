@@ -371,9 +371,16 @@ export async function getPlayableUrls(id, preferredLevel, prefetchCache, reqId, 
     }
   }
 
-  // Phase 2.5: unblock 已拿到可播放试听 URL 时立即出声。
+  // Phase 2.5: 已有可播放试听 URL 时，只给 match 一个很短的完整音源机会。
+  // 快速 match 成功则保留原有“完整音源优先”；否则立即使用试听，避免撞上 15s loading timeout。
   if (candidates.length === 0 && trialCandidates.length > 0) {
-    trialCandidates.forEach(candidate => addCandidate(candidates, { ...candidate, cacheable: false }))
+    const matched = await fetchMatchedSongUrl(id, Math.min(PLAYBACK.FAST_TIMEOUT, 800), signal)
+    if (matched?.url) {
+      addCandidate(candidates, matched)
+      firstUrlLevel = 'match'
+    } else {
+      trialCandidates.forEach(candidate => addCandidate(candidates, { ...candidate, cacheable: false }))
+    }
   }
   // Phase 3: 官方 match 解灰
   if (candidates.length === 0) {
