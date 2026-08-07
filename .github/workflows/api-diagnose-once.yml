@@ -15,45 +15,53 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Inspect docs and current API
+      - name: Probe playback fallbacks
         shell: bash
         run: |
           node --input-type=module <<'NODE'
           const base = 'https://music.xubuyuan.top'
-          const headers = {
-            'User-Agent': 'zheting-api-diagnose',
-            'Referer': 'https://music.163.com/',
-          }
+          const headers = { 'User-Agent': 'zheting-api-diagnose', 'Referer': 'https://music.163.com/' }
 
-          async function text(path) {
-            const res = await fetch(new URL(path, base), { headers })
-            const body = await res.text()
-            console.log('TEXT', JSON.stringify({ path, status: res.status, type: res.headers.get('content-type'), length: body.length }))
-            return body
-          }
-
-          for (const path of ['/docs/', '/docs/index.html', '/docs/README.md', '/docs/_sidebar.md']) {
-            try {
-              const body = await text(path)
-              console.log(`DOC_${path.replaceAll('/', '_')}`, body.slice(0, 6000).replaceAll('\r', ''))
-            } catch (error) {
-              console.log('DOC_ERROR', path, String(error))
-            }
-          }
-
-          const id = 1956712935
-          for (const path of ['/lyric', '/lyric/new']) {
+          async function json(path, params = {}) {
             const url = new URL(path, base)
-            url.searchParams.set('id', String(id))
-            const res = await fetch(url, { headers })
-            const data = await res.json()
-            console.log(path.toUpperCase(), JSON.stringify({
-              status: res.status,
-              code: data?.code,
-              lrcSample: data?.lrc?.lyric?.split('\n').slice(0, 12) || [],
-              tlyricSample: data?.tlyric?.lyric?.split('\n').slice(0, 8) || [],
-              klyricSample: data?.klyric?.lyric?.split('\n').slice(0, 5) || [],
-              yrcSample: data?.yrc?.lyric?.split('\n').slice(0, 5) || [],
-            }))
+            for (const [k, v] of Object.entries(params)) url.searchParams.set(k, String(v))
+            const res = await fetch(url, { headers, redirect: 'manual' })
+            const text = await res.text()
+            let data = null
+            try { data = JSON.parse(text) } catch {}
+            return { status: res.status, data, location: res.headers.get('location'), type: res.headers.get('content-type') }
           }
+
+          async function inspectSong(id, label) {
+            console.log('\nSONG', label, id)
+            const detail = await json('/song/detail', { ids: id })
+            const song = detail.data?.songs?.[0]
+            console.log('DETAIL', JSON.stringify({ code: detail.data?.code, name: song?.name, fee: song?.fee, privilege: detail.data?.privileges?.[0] && { fee: detail.data.privileges[0].fee, st: detail.data.privileges[0].st, pl: detail.data.privileges[0].pl, dl: detail.data.privileges[0].dl, maxBrLevel: detail.data.privileges[0].maxBrLevel } }))
+
+            for (const level of ['standard', 'higher', 'exhigh', 'lossless']) {
+              for (const unblock of [false, true]) {
+                const r = await json('/song/url/v1', { id, level, unblock })
+                const x = r.data?.data?.[0]
+                console.log('V1', JSON.stringify({ level, unblock, http: r.status, code: r.data?.code, itemCode: x?.code, hasUrl: !!x?.url, fee: x?.fee, freeTrial: !!x?.freeTrialInfo, levelOut: x?.level, message: x?.message || r.data?.message || null }))
+              }
+            }
+
+            const old = await json('/song/url', { id, br: 320000 })
+            const ox = old.data?.data?.[0]
+            console.log('OLD', JSON.stringify({ http: old.status, code: old.data?.code, itemCode: ox?.code, hasUrl: !!ox?.url, fee: ox?.fee, freeTrial: !!ox?.freeTrialInfo }))
+
+            const match = await json('/song/url/match', { id })
+            console.log('MATCH', JSON.stringify({ http: match.status, code: match.data?.code, hasUrl: !!(match.data?.data?.[0]?.url || match.data?.data?.url || match.data?.url), message: match.data?.message || match.data?.msg || null }))
+
+            const outer = `https://music.163.com/song/media/outer/url?id=${id}.mp3`
+            const outerRes = await fetch(outer, { headers, redirect: 'manual' })
+            console.log('OUTER', JSON.stringify({ http: outerRes.status, location: outerRes.headers.get('location'), type: outerRes.headers.get('content-type') }))
+          }
+
+          await inspectSong(1956712935, '知らないままで')
+
+          const search = await json('/search', { keywords: '晴天', limit: 5, type: 1 })
+          const songs = search.data?.result?.songs || []
+          console.log('SEARCH_QINGTIAN', JSON.stringify(songs.map(s => ({ id: s.id, name: s.name, artists: (s.artists || []).map(a => a.name), fee: s.fee }))))
+          if (songs[0]?.id) await inspectSong(songs[0].id, 'search 晴天 first')
           NODE
