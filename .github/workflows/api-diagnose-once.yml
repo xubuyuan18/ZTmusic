@@ -15,53 +15,37 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Probe playback fallbacks
+      - name: Validate unblock media URL
         shell: bash
         run: |
           node --input-type=module <<'NODE'
-          const base = 'https://music.xubuyuan.top'
+          const api = new URL('https://music.xubuyuan.top/song/url/v1')
+          api.searchParams.set('id', '1956712935')
+          api.searchParams.set('level', 'standard')
+          api.searchParams.set('unblock', 'true')
+          api.searchParams.set('randomCNIP', 'true')
           const headers = { 'User-Agent': 'zheting-api-diagnose', 'Referer': 'https://music.163.com/' }
+          const response = await fetch(api, { headers })
+          const data = await response.json()
+          const item = data?.data?.[0]
+          const mediaUrl = item?.url
+          console.log('API_RESULT', JSON.stringify({ http: response.status, code: data?.code, itemCode: item?.code, hasUrl: !!mediaUrl, freeTrial: !!item?.freeTrialInfo, level: item?.level, type: item?.type }))
+          if (!mediaUrl) process.exit(2)
+          const parsed = new URL(mediaUrl)
+          console.log('MEDIA_URL', JSON.stringify({ protocol: parsed.protocol, host: parsed.host, pathnameSuffix: parsed.pathname.slice(-80), hasQuery: !!parsed.search }))
 
-          async function json(path, params = {}) {
-            const url = new URL(path, base)
-            for (const [k, v] of Object.entries(params)) url.searchParams.set(k, String(v))
-            const res = await fetch(url, { headers, redirect: 'manual' })
-            const text = await res.text()
-            let data = null
-            try { data = JSON.parse(text) } catch {}
-            return { status: res.status, data, location: res.headers.get('location'), type: res.headers.get('content-type') }
-          }
-
-          async function inspectSong(id, label) {
-            console.log('\nSONG', label, id)
-            const detail = await json('/song/detail', { ids: id })
-            const song = detail.data?.songs?.[0]
-            console.log('DETAIL', JSON.stringify({ code: detail.data?.code, name: song?.name, fee: song?.fee, privilege: detail.data?.privileges?.[0] && { fee: detail.data.privileges[0].fee, st: detail.data.privileges[0].st, pl: detail.data.privileges[0].pl, dl: detail.data.privileges[0].dl, maxBrLevel: detail.data.privileges[0].maxBrLevel } }))
-
-            for (const level of ['standard', 'higher', 'exhigh', 'lossless']) {
-              for (const unblock of [false, true]) {
-                const r = await json('/song/url/v1', { id, level, unblock })
-                const x = r.data?.data?.[0]
-                console.log('V1', JSON.stringify({ level, unblock, http: r.status, code: r.data?.code, itemCode: x?.code, hasUrl: !!x?.url, fee: x?.fee, freeTrial: !!x?.freeTrialInfo, levelOut: x?.level, message: x?.message || r.data?.message || null }))
+          for (const method of ['HEAD', 'GET']) {
+            const requestHeaders = { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://music.163.com/' }
+            if (method === 'GET') requestHeaders.Range = 'bytes=0-1023'
+            try {
+              const res = await fetch(mediaUrl, { method, headers: requestHeaders, redirect: 'manual' })
+              console.log('MEDIA_PROBE', JSON.stringify({ method, status: res.status, location: res.headers.get('location'), type: res.headers.get('content-type'), length: res.headers.get('content-length'), acceptRanges: res.headers.get('accept-ranges') }))
+              if (method === 'GET') {
+                const bytes = new Uint8Array(await res.arrayBuffer())
+                console.log('MEDIA_BYTES', JSON.stringify({ count: bytes.length, first16: [...bytes.slice(0, 16)] }))
               }
+            } catch (error) {
+              console.log('MEDIA_ERROR', method, String(error))
             }
-
-            const old = await json('/song/url', { id, br: 320000 })
-            const ox = old.data?.data?.[0]
-            console.log('OLD', JSON.stringify({ http: old.status, code: old.data?.code, itemCode: ox?.code, hasUrl: !!ox?.url, fee: ox?.fee, freeTrial: !!ox?.freeTrialInfo }))
-
-            const match = await json('/song/url/match', { id })
-            console.log('MATCH', JSON.stringify({ http: match.status, code: match.data?.code, hasUrl: !!(match.data?.data?.[0]?.url || match.data?.data?.url || match.data?.url), message: match.data?.message || match.data?.msg || null }))
-
-            const outer = `https://music.163.com/song/media/outer/url?id=${id}.mp3`
-            const outerRes = await fetch(outer, { headers, redirect: 'manual' })
-            console.log('OUTER', JSON.stringify({ http: outerRes.status, location: outerRes.headers.get('location'), type: outerRes.headers.get('content-type') }))
           }
-
-          await inspectSong(1956712935, '知らないままで')
-
-          const search = await json('/search', { keywords: '晴天', limit: 5, type: 1 })
-          const songs = search.data?.result?.songs || []
-          console.log('SEARCH_QINGTIAN', JSON.stringify(songs.map(s => ({ id: s.id, name: s.name, artists: (s.artists || []).map(a => a.name), fee: s.fee }))))
-          if (songs[0]?.id) await inspectSong(songs[0].id, 'search 晴天 first')
           NODE
