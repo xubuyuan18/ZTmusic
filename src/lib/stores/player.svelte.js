@@ -19,7 +19,7 @@ import { getPlayableUrls, fillFallbackUrls } from '../player/url-resolver.js'
 import { getTrialPlaybackMessage } from '../player/trial-message.js'
 import { compactTrack, compactQueue, getNextIndex, getPrevIndex } from '../player/queue.js'
 import { dbHistory } from '../db/history.js'
-import { initNativeMedia, syncNativeMedia, destroyNativeMedia } from '../player/native-media.js'
+import { initNativeMedia, syncNativeMedia, destroyNativeMedia, shouldUseWebMediaSession } from '../player/native-media.js'
 import { createPrefetchManager } from '../player/prefetch.js'
 import { PLAYBACK, QUALITY_ORDER, ERROR_MESSAGES, STORAGE_KEYS, FALLBACK_URL_TEMPLATE } from '../utils/constants.js'
 import { ERROR_KIND, createErrorSnapshot, debugLog, swallowError } from '../utils/error.js'
@@ -116,7 +116,7 @@ class PlayerState {
       onMediaButton: (action) => this._handleMediaButton(action),
     })
 
-    // 初始化媒体会话（桌面 Web Media Session API）
+    // 浏览器/macOS 使用 Web Media Session；Tauri 原生平台由 native-media 接管
     this._initMediaSession()
   }
 
@@ -196,6 +196,7 @@ class PlayerState {
   }
 
   _initMediaSession() {
+    if (!shouldUseWebMediaSession()) return
     if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return
     if (this._mediaSessionInited) return
     this._mediaSessionInited = true
@@ -214,15 +215,15 @@ class PlayerState {
     this._setMediaActionHandler('previoustrack', () => this.prev())
     this._setMediaActionHandler('seekbackward', (details) => {
       const offset = details?.seekOffset || 10
-      engine.seek(Math.max(0, this.currentTime - offset))
+      this.seek(Math.max(0, this.currentTime - offset))
     })
     this._setMediaActionHandler('seekforward', (details) => {
       const offset = details?.seekOffset || 10
       const duration = this.duration > 0 ? this.duration : Number.POSITIVE_INFINITY
-      engine.seek(Math.min(duration, this.currentTime + offset))
+      this.seek(Math.min(duration, this.currentTime + offset))
     })
     this._setMediaActionHandler('seekto', (details) => {
-      if (Number.isFinite(details?.seekTime)) engine.seek(details.seekTime)
+      if (Number.isFinite(details?.seekTime)) this.seek(details.seekTime)
     })
   }
 
@@ -235,6 +236,7 @@ class PlayerState {
   }
 
   _syncWebMediaPosition() {
+    if (!shouldUseWebMediaSession()) return
     if (typeof navigator === 'undefined' || !navigator.mediaSession?.setPositionState) return
     const duration = this.duration > 0 ? this.duration : 0
     if (!duration) return
@@ -406,8 +408,8 @@ class PlayerState {
     this._startLoadingTimeout()
     debugLog('player', 'play-track', { id: playableTrack.id, index, preferredLevel: this.preferredLevel })
 
-    // 更新媒体会话元数据
-    if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
+    // 更新 Web Media Session 元数据（原生媒体会话平台由 syncNativeMedia 负责）
+    if (shouldUseWebMediaSession() && typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
       navigator.mediaSession.metadata = new MediaMetadata({
         title: this.title,
         artist: this.artist,
@@ -637,6 +639,8 @@ class PlayerState {
     engine.seek(time)
     this.currentTime = time
     setStorage(STORAGE_KEYS.PLAYER_TIME, time)
+    this._syncWebMediaPosition()
+    syncNativeMedia()
   }
 
   /** 设置音量 */
