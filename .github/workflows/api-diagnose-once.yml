@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Probe current API
+      - name: Inspect docs and current API
         shell: bash
         run: |
           node --input-type=module <<'NODE'
@@ -25,65 +25,35 @@ jobs:
             'Referer': 'https://music.163.com/',
           }
 
-          async function get(path, params = {}) {
-            const url = new URL(path, base)
-            for (const [key, value] of Object.entries(params)) url.searchParams.set(key, String(value))
-            const started = Date.now()
-            const res = await fetch(url, { headers, redirect: 'manual' })
-            const text = await res.text()
-            let data = null
-            try { data = JSON.parse(text) } catch {}
-            console.log(JSON.stringify({
-              path,
-              status: res.status,
-              ms: Date.now() - started,
-              contentType: res.headers.get('content-type'),
-              location: res.headers.get('location'),
-              json: !!data,
-              code: data?.code ?? null,
-              message: data?.message ?? data?.msg ?? null,
-            }))
-            return { res, data, text }
+          async function text(path) {
+            const res = await fetch(new URL(path, base), { headers })
+            const body = await res.text()
+            console.log('TEXT', JSON.stringify({ path, status: res.status, type: res.headers.get('content-type'), length: body.length }))
+            return body
           }
 
-          const search = await get('/search', { keywords: '知らないままで', limit: 10, type: 1 })
-          const songs = search.data?.result?.songs || []
-          console.log('SEARCH_RESULTS', JSON.stringify(songs.slice(0, 10).map(song => ({
-            id: song.id,
-            name: song.name,
-            artists: (song.artists || song.ar || []).map(a => a.name),
-          }))))
+          for (const path of ['/docs/', '/docs/index.html', '/docs/README.md', '/docs/_sidebar.md']) {
+            try {
+              const body = await text(path)
+              console.log(`DOC_${path.replaceAll('/', '_')}`, body.slice(0, 6000).replaceAll('\r', ''))
+            } catch (error) {
+              console.log('DOC_ERROR', path, String(error))
+            }
+          }
 
-          const song = songs.find(song => (song.artists || song.ar || []).some(a => a.name === 'ロクデナシ')) || songs[0]
-          if (!song?.id) throw new Error('Target song not found')
-          console.log('TARGET', JSON.stringify({ id: song.id, name: song.name }))
-
-          const lyric = await get('/lyric', { id: song.id })
-          console.log('LYRIC', JSON.stringify({
-            lrcLength: lyric.data?.lrc?.lyric?.length || 0,
-            tlyricLength: lyric.data?.tlyric?.lyric?.length || 0,
-            yrcLength: lyric.data?.yrc?.lyric?.length || 0,
-            keys: lyric.data ? Object.keys(lyric.data) : [],
-          }))
-
-          const lyricNew = await get('/lyric/new', { id: song.id })
-          console.log('LYRIC_NEW', JSON.stringify({
-            lrcLength: lyricNew.data?.lrc?.lyric?.length || 0,
-            tlyricLength: lyricNew.data?.tlyric?.lyric?.length || 0,
-            yrcLength: lyricNew.data?.yrc?.lyric?.length || 0,
-            keys: lyricNew.data ? Object.keys(lyricNew.data) : [],
-          }))
-
-          const audio = await get('/song/url/v1', { id: song.id, level: 'standard' })
-          const item = audio.data?.data?.[0] || null
-          console.log('AUDIO', JSON.stringify(item ? {
-            id: item.id,
-            hasUrl: !!item.url,
-            code: item.code,
-            fee: item.fee,
-            level: item.level,
-            type: item.type,
-            time: item.time,
-            message: item.message || null,
-          } : { item: null }))
+          const id = 1956712935
+          for (const path of ['/lyric', '/lyric/new']) {
+            const url = new URL(path, base)
+            url.searchParams.set('id', String(id))
+            const res = await fetch(url, { headers })
+            const data = await res.json()
+            console.log(path.toUpperCase(), JSON.stringify({
+              status: res.status,
+              code: data?.code,
+              lrcSample: data?.lrc?.lyric?.split('\n').slice(0, 12) || [],
+              tlyricSample: data?.tlyric?.lyric?.split('\n').slice(0, 8) || [],
+              klyricSample: data?.klyric?.lyric?.split('\n').slice(0, 5) || [],
+              yrcSample: data?.yrc?.lyric?.split('\n').slice(0, 5) || [],
+            }))
+          }
           NODE
