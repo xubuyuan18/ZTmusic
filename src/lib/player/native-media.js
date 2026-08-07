@@ -2,7 +2,8 @@
  * 原生媒体会话管理
  * - Android 通知栏（通过 Tauri Kotlin Plugin）
  * - Linux 桌面 MPRIS（通过 Tauri Rust 后端）
- * - Windows/macOS 桌面系统媒体控件（Web Media Session API，由 PlayerState 直接维护）
+ * - Windows 桌面 SMTC（通过 Tauri Rust 后端）
+ * - 浏览器/macOS 使用 Web Media Session API（由 PlayerState 直接维护）
  *
  * 职责：仅处理原生平台媒体控件的双向同步，不涉及播放逻辑。
  */
@@ -25,23 +26,29 @@ function isTauriRuntime() {
 }
 
 function isTauriAndroid() {
-  return isTauriRuntime() && /Android/i.test(navigator.userAgent)
+  return isTauriRuntime() && typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent)
 }
 
 function isTauriLinux() {
-  if (!isTauriRuntime()) return false
+  if (!isTauriRuntime() || typeof navigator === 'undefined') return false
   const platform = navigator.userAgentData?.platform || navigator.platform || navigator.userAgent
   return /Linux/i.test(platform) && !/Android/i.test(navigator.userAgent)
 }
 
 function isTauriWindows() {
-  if (!isTauriRuntime()) return false
+  if (!isTauriRuntime() || typeof navigator === 'undefined') return false
   const platform = navigator.userAgentData?.platform || navigator.platform || navigator.userAgent
   return /Win/i.test(platform)
 }
 
-function shouldUseNativeBridge() {
-  return isTauriAndroid() || isTauriLinux()
+/** Tauri 中由原生层拥有媒体会话的平台。 */
+export function shouldUseNativeBridge() {
+  return isTauriAndroid() || isTauriLinux() || isTauriWindows()
+}
+
+/** 避免 Web Media Session 与原生媒体会话在同一平台重复注册。 */
+export function shouldUseWebMediaSession() {
+  return !shouldUseNativeBridge()
 }
 
 function invokeNative(command, payload, context) {
@@ -90,8 +97,7 @@ export async function initNativeMedia(options = {}) {
     }
   }
 
-  // Android 轮询作为通知栏按钮兜底；Linux 轮询 MPRIS 媒体键回调。
-  // Windows/macOS 使用 Web Media Session API，不走 Tauri 原生桥，避免双注册媒体会话。
+  // Android 轮询作为通知栏按钮兜底；Linux/Windows 轮询原生媒体键回调。
   if (shouldUseNativeBridge() && _tauriInvoke && !_nativeMediaPollTimer) {
     const interval = isTauriAndroid() ? PLAYBACK.NATIVE_ANDROID_POLL_INTERVAL : PLAYBACK.NATIVE_POLL_INTERVAL
     _nativeMediaPollTimer = setInterval(() => {
@@ -149,7 +155,6 @@ export function syncNativeMedia() {
       _pendingSyncTimer = setTimeout(() => _doSyncNative(), 500)
     }
   }
-  // Windows/macOS: navigator.mediaSession（Web Media Session API）由 PlayerState 直接处理。
 }
 
 function _doSyncNative() {
