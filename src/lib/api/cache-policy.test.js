@@ -22,6 +22,8 @@ assertEqual(getApiCacheTtl('/song/url/match', 'GET'), 0, 'does not cache matched
 assertEqual(getApiCacheTtl('/vip/info', 'GET'), 0, 'does not cache VIP info')
 assertEqual(getApiCacheTtl('/vip/info/v2', 'GET'), 0, 'does not cache VIP info v2')
 assertEqual(getApiCacheTtl('/login/status', 'GET'), 0, 'does not cache login status')
+assertEqual(getApiCacheTtl('/lyric', 'GET'), 0, 'does not persist regular lyric responses in transport cache')
+assertEqual(getApiCacheTtl('/lyric/new', 'GET'), 0, 'does not persist word-timed lyric responses in transport cache')
 assertEqual(getApiCacheTtl('/playlist/track/all', 'GET'), 30 * 60 * 1000, 'keeps playlist tracks cache TTL')
 assertEqual(getApiCacheTtl('/playlist/track/all', 'POST'), 0, 'does not cache non-GET requests')
 assertEqual(getApiCacheTtl('/playlist/track/all', 'GET', { cache: false }), 0, 'respects explicit cache=false')
