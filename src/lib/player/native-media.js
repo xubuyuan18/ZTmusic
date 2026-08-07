@@ -62,9 +62,9 @@ function invokeNative(command, payload, context) {
 /**
  * 初始化原生媒体会话
  * @param {object} options
- * @param {Function} options.getMetadata - () => ({ title, artist, cover, duration })
+ * @param {Function} options.getMetadata - () => ({ title, artist, album, cover, duration })
  * @param {Function} options.getPlaybackState - () => ({ playing, position, duration })
- * @param {Function} options.onMediaButton - (action) => void
+ * @param {Function} options.onMediaButton - (action) => void，seek 使用 `seek:<seconds>`
  */
 export async function initNativeMedia(options = {}) {
   _getMetadata = options.getMetadata || _getMetadata
@@ -135,7 +135,7 @@ export function syncNativeMedia() {
   const dur = state.duration || 0
   const pos = state.position || 0
   const playing = !!state.playing
-  const metaKey = `${meta.title}|${meta.artist}|${meta.cover}|${dur}`
+  const metaKey = `${meta.title}|${meta.artist}|${meta.album || ''}|${meta.cover}|${dur}`
 
   if (!shouldUseNativeBridge() || !_tauriInvoke) return
 
@@ -167,11 +167,12 @@ function _doSyncNative() {
   const { metaChanged, playing, position, duration, meta } = payload
 
   if (metaChanged) {
-    _lastNativeMeta = `${meta.title}|${meta.artist}|${meta.cover}|${duration}`
-    debugLog('native-media', 'metadata', { title: meta.title, artist: meta.artist, duration: duration })
+    _lastNativeMeta = `${meta.title}|${meta.artist}|${meta.album || ''}|${meta.cover}|${duration}`
+    debugLog('native-media', 'metadata', { title: meta.title, artist: meta.artist, album: meta.album, duration })
     invokeNative('updateMetadata', {
       title: meta.title || '',
       artist: meta.artist || '',
+      album: meta.album || '',
       coverUrl: meta.cover || '',
       duration,
     }, 'updateMetadata')
