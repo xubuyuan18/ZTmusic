@@ -1,7 +1,5 @@
 #[cfg(target_os = "linux")]
 mod linux_mpris;
-#[cfg(target_os = "windows")]
-mod windows_smtc;
 mod api;
 mod media_metadata;
 mod media_playback;
@@ -26,8 +24,6 @@ pub(crate) struct NativeMediaState {
     pub(crate) handle: Mutex<Option<tauri::plugin::PluginHandle<tauri::Wry>>>,
     #[cfg(target_os = "linux")]
     pub(crate) mpris: linux_mpris::LinuxMprisState,
-    #[cfg(target_os = "windows")]
-    pub(crate) smtc: windows_smtc::WindowsSmtcState,
 }
 
 #[derive(Debug, Deserialize)]
@@ -40,13 +36,6 @@ pub(crate) struct NcmRequest {
     pub(crate) body: Option<Value>,
     pub(crate) cookie: Option<String>,
     pub(crate) allow_error_body: Option<bool>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct NcmResponse {
-    pub(crate) data: Value,
-    pub(crate) cookie: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -116,15 +105,11 @@ fn native_media_plugin() -> tauri::plugin::TauriPlugin<tauri::Wry> {
                 });
             }
 
-            #[cfg(target_os = "windows")]
-            {
-                let _ = api;
-                app.manage(NativeMediaState {
-                    smtc: windows_smtc::WindowsSmtcState::new(),
-                });
-            }
-
-            #[cfg(not(any(target_os = "android", target_os = "linux", target_os = "windows")))]
+            // Windows/macOS/browser-like desktop platforms use the Web Media Session
+            // exposed by the webview. In particular, do not create a Windows MediaPlayer
+            // here: each MediaPlayer owns its own SMTC session and would duplicate the
+            // WebView2/HTMLAudio session seen by Windows and Lyricify Lite.
+            #[cfg(not(any(target_os = "android", target_os = "linux")))]
             {
                 let _ = api;
                 app.manage(NativeMediaState {});
