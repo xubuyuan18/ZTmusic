@@ -73,9 +73,6 @@ export async function initNativeMedia(options = {}) {
 
   debugLog('native-media', 'init', { runtime: isTauriRuntime(), android: isTauriAndroid(), linux: isTauriLinux(), windows: isTauriWindows(), nativeBridge: shouldUseNativeBridge(), webMediaSession: shouldUseWebMediaSession() })
   if (!isTauriRuntime() || typeof window === 'undefined') return
-  // Windows deliberately stays on Web Media Session. Do not import/invoke the
-  // Rust media bridge there, so a future native command cannot recreate a second SMTC session.
-  if (!shouldUseNativeBridge()) return
 
   try {
     const { invoke } = await import('@tauri-apps/api/core')
