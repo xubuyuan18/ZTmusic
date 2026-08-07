@@ -19,7 +19,7 @@ import { getPlayableUrls, fillFallbackUrls } from '../player/url-resolver.js'
 import { getTrialPlaybackMessage } from '../player/trial-message.js'
 import { compactTrack, compactQueue, getNextIndex, getPrevIndex } from '../player/queue.js'
 import { dbHistory } from '../db/history.js'
-import { initNativeMedia, syncNativeMedia, destroyNativeMedia } from '../player/native-media.js'
+import { initNativeMedia, syncNativeMedia, destroyNativeMedia, shouldUseWebMediaSession } from '../player/native-media.js'
 import { createPrefetchManager } from '../player/prefetch.js'
 import { PLAYBACK, QUALITY_ORDER, ERROR_MESSAGES, STORAGE_KEYS, FALLBACK_URL_TEMPLATE } from '../utils/constants.js'
 import { ERROR_KIND, createErrorSnapshot, debugLog, swallowError } from '../utils/error.js'
@@ -105,6 +105,7 @@ class PlayerState {
       getMetadata: () => ({
         title: this.title,
         artist: this.artist,
+        album: this.currentTrack?.al?.name || '',
         cover: this.cover,
         duration: this.duration > 0 ? this.duration : 0,
       }),
@@ -116,7 +117,7 @@ class PlayerState {
       onMediaButton: (action) => this._handleMediaButton(action),
     })
 
-    // 初始化媒体会话（桌面 Web Media Session API）
+    // 浏览器/macOS 使用 Web Media Session；Tauri 原生平台由 native-media 接管
     this._initMediaSession()
   }
 
@@ -196,6 +197,7 @@ class PlayerState {
   }
 
   _initMediaSession() {
+    if (!shouldUseWebMediaSession()) return
     if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return
     if (this._mediaSessionInited) return
     this._mediaSessionInited = true
@@ -214,15 +216,15 @@ class PlayerState {
     this._setMediaActionHandler('previoustrack', () => this.prev())
     this._setMediaActionHandler('seekbackward', (details) => {
       const offset = details?.seekOffset || 10
-      engine.seek(Math.max(0, this.currentTime - offset))
+      this.seek(Math.max(0, this.currentTime - offset))
     })
     this._setMediaActionHandler('seekforward', (details) => {
       const offset = details?.seekOffset || 10
       const duration = this.duration > 0 ? this.duration : Number.POSITIVE_INFINITY
-      engine.seek(Math.min(duration, this.currentTime + offset))
+      this.seek(Math.min(duration, this.currentTime + offset))
     })
     this._setMediaActionHandler('seekto', (details) => {
-      if (Number.isFinite(details?.seekTime)) engine.seek(details.seekTime)
+      if (Number.isFinite(details?.seekTime)) this.seek(details.seekTime)
     })
   }
 
@@ -235,6 +237,7 @@ class PlayerState {
   }
 
   _syncWebMediaPosition() {
+    if (!shouldUseWebMediaSession()) return
     if (typeof navigator === 'undefined' || !navigator.mediaSession?.setPositionState) return
     const duration = this.duration > 0 ? this.duration : 0
     if (!duration) return
@@ -257,14 +260,33 @@ class PlayerState {
     }, PLAYBACK.SAVE_INTERVAL)
   }
 
-  /** loading 超时保护：15 秒后自动解除 loading */
-  _startLoadingTimeout() {
+  /** 让当前异步播放请求失效；resetAudio 用于彻底停止并释放当前音频。 */
+  _invalidatePlaybackRequest({ resetAudio = false } = {}) {
+    this._abortController.abort()
+    this._abortController = new AbortController()
+    this._playRequestId++
+    this._waitingForFill = false
+    this._restoreSeeking = false
+    this._shouldAutoPlay = false
+    if (resetAudio) engine.reset()
+    else engine.pause()
+  }
+
+  /** loading 超时保护：超时后取消当前请求，避免迟到结果重新开始播放。 */
+  _startLoadingTimeout(requestId = this._playRequestId) {
     this._clearLoadingTimer()
     this._loadingTimer = setTimeout(() => {
-      if (this.loading) {
-        this.loading = false
-        this._setPlayerError('LoadingTimeout', { kind: ERROR_KIND.TIMEOUT, message: '播放加载超时' }, ERROR_MESSAGES.PLAY_FAILED)
-      }
+      if (!this.loading || requestId !== this._playRequestId) return
+      this._invalidatePlaybackRequest()
+      this.loading = false
+      this.playing = false
+      syncNativeMedia()
+      this._setPlayerError(
+        'LoadingTimeout',
+        { kind: ERROR_KIND.TIMEOUT, message: '播放加载超时' },
+        ERROR_MESSAGES.PLAY_FAILED,
+        { timedOutRequestId: requestId },
+      )
     }, 15000)
   }
 
@@ -331,6 +353,10 @@ class PlayerState {
     else if (action === 'pause') { engine.pause() }
     else if (action === 'next') { this.next() }
     else if (action === 'prev') { this.prev() }
+    else if (typeof action === 'string' && action.startsWith('seek:')) {
+      const seconds = Number(action.slice(5))
+      if (Number.isFinite(seconds)) this.seek(seconds)
+    }
   }
 
   /**
@@ -403,15 +429,15 @@ class PlayerState {
     this.playing = false
     this._shouldAutoPlay = true
     this._clearError()
-    this._startLoadingTimeout()
+    this._startLoadingTimeout(requestId)
     debugLog('player', 'play-track', { id: playableTrack.id, index, preferredLevel: this.preferredLevel })
 
-    // 更新媒体会话元数据
-    if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
+    // 更新 Web Media Session 元数据（原生媒体会话平台由 syncNativeMedia 负责）
+    if (shouldUseWebMediaSession() && typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
       navigator.mediaSession.metadata = new MediaMetadata({
         title: this.title,
         artist: this.artist,
-        album: '',
+        album: this.currentTrack?.al?.name || '',
         artwork: [{ src: coverUrl(this.cover, 512), sizes: '512x512', type: 'image/jpeg' }],
       })
     }
@@ -514,7 +540,6 @@ class PlayerState {
           this._fallbackNext()
         }
       }
-
 
       // 持久化最新 URL 到 IndexedDB
       if (result.length > 0 && result[0] !== FALLBACK_URL_TEMPLATE(id)) {
@@ -637,6 +662,8 @@ class PlayerState {
     engine.seek(time)
     this.currentTime = time
     setStorage(STORAGE_KEYS.PLAYER_TIME, time)
+    this._syncWebMediaPosition()
+    syncNativeMedia()
   }
 
   /** 设置音量 */
@@ -693,16 +720,30 @@ class PlayerState {
   }
 
   _clearCurrentTrack() {
+    this._clearLoadingTimer()
+    this._invalidatePlaybackRequest({ resetAudio: true })
+    this._fallback.updateUrls([])
+    this._firstUrlLevel = ''
     this.id = 0
     this.title = ''
     this.artist = ''
     this.cover = ''
     this.duration = 0
+    this.currentTime = 0
     this.currentTrack = null
     this.playing = false
+    this.loading = false
     this.queueIndex = -1
     this._clearError()
     this._persistState()
+    setStorage(STORAGE_KEYS.PLAYER_TIME, 0)
+
+    if (shouldUseWebMediaSession() && typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
+      try { navigator.mediaSession.metadata = null } catch { /* ignore */ }
+      try { navigator.mediaSession.playbackState = 'none' } catch { /* ignore */ }
+      try { navigator.mediaSession.setPositionState?.() } catch { /* ignore */ }
+    }
+    syncNativeMedia()
   }
 
   // ==========================================
@@ -741,7 +782,7 @@ class PlayerState {
     this.playing = false
     this.loading = true
     this._clearError()
-    this._startLoadingTimeout()
+    this._startLoadingTimeout(requestId)
 
     abortAllRequests()
     this._abortController.abort()

@@ -4,7 +4,8 @@ use crate::NativeMediaState;
 #[cfg(target_os = "android")]
 use crate::NativePlaybackPayload;
 
-/// 更新原生媒体播放状态（播放/暂停 + 进度）。
+/// 更新需要原生桥接的平台播放状态（Android / Linux）。
+/// Windows 由 WebView2 / Web Media Session 直接同步播放状态和时间轴。
 #[allow(non_snake_case)]
 #[tauri::command]
 pub fn updatePlaybackState(
@@ -36,12 +37,7 @@ pub fn updatePlaybackState(
         state.mpris.update_playback_state(playing, position);
     }
 
-    #[cfg(target_os = "windows")]
-    {
-        state.smtc.update_playback_state(playing, position, duration);
-    }
-
-    #[cfg(not(any(target_os = "android", target_os = "linux", target_os = "windows")))]
+    #[cfg(not(any(target_os = "android", target_os = "linux")))]
     {
         let _ = (state, playing, position, duration);
     }

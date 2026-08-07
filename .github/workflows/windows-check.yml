@@ -1,0 +1,38 @@
+name: Windows Rust Check
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src-tauri/**'
+      - '.github/workflows/windows-check.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-rust-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Cargo check (Windows)
+    runs-on: windows-2022
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.88.0
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: windows-check
+
+      - name: Check Tauri Rust backend
+        run: cargo check --manifest-path src-tauri/Cargo.toml --locked

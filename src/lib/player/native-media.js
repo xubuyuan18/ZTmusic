@@ -2,9 +2,10 @@
  * 原生媒体会话管理
  * - Android 通知栏（通过 Tauri Kotlin Plugin）
  * - Linux 桌面 MPRIS（通过 Tauri Rust 后端）
- * - Windows/macOS 桌面系统媒体控件（Web Media Session API，由 PlayerState 直接维护）
+ * - Windows 桌面使用 WebView2 / Web Media Session，避免额外创建第二个 SMTC session
+ * - 浏览器/macOS 使用 Web Media Session API（由 PlayerState 直接维护）
  *
- * 职责：仅处理原生平台媒体控件的双向同步，不涉及播放逻辑。
+ * 职责：仅处理需要原生桥接的平台媒体控件双向同步，不涉及播放逻辑。
  */
 
 import { PLAYBACK } from '../utils/constants.js'
@@ -25,23 +26,29 @@ function isTauriRuntime() {
 }
 
 function isTauriAndroid() {
-  return isTauriRuntime() && /Android/i.test(navigator.userAgent)
+  return isTauriRuntime() && typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent)
 }
 
 function isTauriLinux() {
-  if (!isTauriRuntime()) return false
+  if (!isTauriRuntime() || typeof navigator === 'undefined') return false
   const platform = navigator.userAgentData?.platform || navigator.platform || navigator.userAgent
   return /Linux/i.test(platform) && !/Android/i.test(navigator.userAgent)
 }
 
 function isTauriWindows() {
-  if (!isTauriRuntime()) return false
+  if (!isTauriRuntime() || typeof navigator === 'undefined') return false
   const platform = navigator.userAgentData?.platform || navigator.platform || navigator.userAgent
   return /Win/i.test(platform)
 }
 
-function shouldUseNativeBridge() {
+/** Tauri 中仍需要原生媒体桥接的平台。Windows 直接复用 WebView2 自带的 SMTC。 */
+export function shouldUseNativeBridge() {
   return isTauriAndroid() || isTauriLinux()
+}
+
+/** Windows/browser/macOS 使用 Web Media Session；Android/Linux 由 native bridge 接管。 */
+export function shouldUseWebMediaSession() {
+  return !shouldUseNativeBridge()
 }
 
 function invokeNative(command, payload, context) {
@@ -55,16 +62,16 @@ function invokeNative(command, payload, context) {
 /**
  * 初始化原生媒体会话
  * @param {object} options
- * @param {Function} options.getMetadata - () => ({ title, artist, cover, duration })
+ * @param {Function} options.getMetadata - () => ({ title, artist, album, cover, duration })
  * @param {Function} options.getPlaybackState - () => ({ playing, position, duration })
- * @param {Function} options.onMediaButton - (action) => void
+ * @param {Function} options.onMediaButton - (action) => void，seek 使用 `seek:<seconds>`
  */
 export async function initNativeMedia(options = {}) {
   _getMetadata = options.getMetadata || _getMetadata
   _getPlaybackState = options.getPlaybackState || _getPlaybackState
   _onMediaButton = options.onMediaButton || _onMediaButton
 
-  debugLog('native-media', 'init', { runtime: isTauriRuntime(), android: isTauriAndroid(), linux: isTauriLinux(), windows: isTauriWindows() })
+  debugLog('native-media', 'init', { runtime: isTauriRuntime(), android: isTauriAndroid(), linux: isTauriLinux(), windows: isTauriWindows(), nativeBridge: shouldUseNativeBridge(), webMediaSession: shouldUseWebMediaSession() })
   if (!isTauriRuntime() || typeof window === 'undefined') return
 
   try {
@@ -90,8 +97,7 @@ export async function initNativeMedia(options = {}) {
     }
   }
 
-  // Android 轮询作为通知栏按钮兜底；Linux 轮询 MPRIS 媒体键回调。
-  // Windows/macOS 使用 Web Media Session API，不走 Tauri 原生桥，避免双注册媒体会话。
+  // Android 轮询作为通知栏按钮兜底；Linux 轮询原生媒体键回调。
   if (shouldUseNativeBridge() && _tauriInvoke && !_nativeMediaPollTimer) {
     const interval = isTauriAndroid() ? PLAYBACK.NATIVE_ANDROID_POLL_INTERVAL : PLAYBACK.NATIVE_POLL_INTERVAL
     _nativeMediaPollTimer = setInterval(() => {
@@ -129,7 +135,7 @@ export function syncNativeMedia() {
   const dur = state.duration || 0
   const pos = state.position || 0
   const playing = !!state.playing
-  const metaKey = `${meta.title}|${meta.artist}|${meta.cover}|${dur}`
+  const metaKey = `${meta.title}|${meta.artist}|${meta.album || ''}|${meta.cover}|${dur}`
 
   if (!shouldUseNativeBridge() || !_tauriInvoke) return
 
@@ -149,7 +155,6 @@ export function syncNativeMedia() {
       _pendingSyncTimer = setTimeout(() => _doSyncNative(), 500)
     }
   }
-  // Windows/macOS: navigator.mediaSession（Web Media Session API）由 PlayerState 直接处理。
 }
 
 function _doSyncNative() {
@@ -162,11 +167,12 @@ function _doSyncNative() {
   const { metaChanged, playing, position, duration, meta } = payload
 
   if (metaChanged) {
-    _lastNativeMeta = `${meta.title}|${meta.artist}|${meta.cover}|${duration}`
-    debugLog('native-media', 'metadata', { title: meta.title, artist: meta.artist, duration: duration })
+    _lastNativeMeta = `${meta.title}|${meta.artist}|${meta.album || ''}|${meta.cover}|${duration}`
+    debugLog('native-media', 'metadata', { title: meta.title, artist: meta.artist, album: meta.album, duration })
     invokeNative('updateMetadata', {
       title: meta.title || '',
       artist: meta.artist || '',
+      album: meta.album || '',
       coverUrl: meta.cover || '',
       duration,
     }, 'updateMetadata')

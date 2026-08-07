@@ -13,6 +13,8 @@ function getCodecSupport(audio) {
   }
 }
 
+const ENGINE_EVENTS = ['timeupdate', 'ended', 'loadstart', 'canplay', 'error', 'play', 'pause']
+
 class AudioEngine {
   constructor() {
     this.audio = createAudioElement()
@@ -20,39 +22,46 @@ class AudioEngine {
     // 隐藏预加载器：用于后台加载下一首歌的音频
     this.preloadAudio = createAudioElement()
     this.preloadedUrl = ''
-    this._onTimeUpdate = null
-    this._onEnded = null
-    this._onLoadStart = null
-    this._onCanPlay = null
-    this._onError = null
-    this._onPlay = null
-    this._onPause = null
+    this._listeners = Object.fromEntries(ENGINE_EVENTS.map(event => [event, new Set()]))
 
     this._handlers = {
       timeupdate: () => {
-        if (this._onTimeUpdate) this._onTimeUpdate(this.audio.currentTime)
+        this._emit('timeupdate', this.audio.currentTime)
       },
       ended: () => {
-        if (this._onEnded) this._onEnded(this.getState())
+        this._emit('ended', this.getState())
       },
       loadstart: () => {
-        if (this._onLoadStart) this._onLoadStart(this.getState())
+        this._emit('loadstart', this.getState())
       },
       canplay: () => {
-        if (this._onCanPlay) this._onCanPlay(this.getState())
+        this._emit('canplay', this.getState())
       },
       error: (event) => {
-        if (this._onError) this._onError(this.getErrorState(event))
+        this._emit('error', this.getErrorState(event))
       },
       play: () => {
-        if (this._onPlay) this._onPlay(this.getState())
+        this._emit('play', this.getState())
       },
       pause: () => {
-        if (this._onPause) this._onPause(this.getState())
+        this._emit('pause', this.getState())
       },
     }
 
     this._bindActiveAudio(this.audio)
+  }
+
+  _emit(event, payload) {
+    const listeners = this._listeners[event]
+    if (!listeners) return
+    for (const listener of [...listeners]) listener(payload)
+  }
+
+  _addListener(event, fn) {
+    if (typeof fn !== 'function') return () => {}
+    const listeners = this._listeners[event]
+    listeners.add(fn)
+    return () => listeners.delete(fn)
   }
 
   _bindActiveAudio(audio) {
@@ -184,6 +193,13 @@ class AudioEngine {
     this.audio.currentTime = Math.max(0, time)
   }
 
+  /** 停止并释放当前/预加载音频，但保留事件订阅与音量配置。 */
+  reset() {
+    this.cancelPreload()
+    this._resetAudio(this.audio)
+    this.currentUrl = ''
+  }
+
   setVolume(v) {
     this.audio.volume = Math.max(0, Math.min(1, v))
   }
@@ -194,27 +210,19 @@ class AudioEngine {
   get paused() { return this.audio.paused }
   get src() { return this.audio.src }
 
-  onTimeUpdate(fn) { this._onTimeUpdate = fn }
-  onEnded(fn) { this._onEnded = fn }
-  onLoadStart(fn) { this._onLoadStart = fn }
-  onCanPlay(fn) { this._onCanPlay = fn }
-  onError(fn) { this._onError = fn }
-  onPlay(fn) { this._onPlay = fn }
-  onPause(fn) { this._onPause = fn }
+  onTimeUpdate(fn) { return this._addListener('timeupdate', fn) }
+  onEnded(fn) { return this._addListener('ended', fn) }
+  onLoadStart(fn) { return this._addListener('loadstart', fn) }
+  onCanPlay(fn) { return this._addListener('canplay', fn) }
+  onError(fn) { return this._addListener('error', fn) }
+  onPlay(fn) { return this._addListener('play', fn) }
+  onPause(fn) { return this._addListener('pause', fn) }
 
   destroy() {
     this.pause()
-    this.cancelPreload()
     this._unbindActiveAudio(this.audio)
-    this._resetAudio(this.audio)
-    this.currentUrl = ''
-    this._onTimeUpdate = null
-    this._onEnded = null
-    this._onLoadStart = null
-    this._onCanPlay = null
-    this._onError = null
-    this._onPlay = null
-    this._onPause = null
+    this.reset()
+    for (const listeners of Object.values(this._listeners)) listeners.clear()
   }
 }
 

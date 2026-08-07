@@ -17,6 +17,14 @@ fn is_allowed_host(host: &str) -> bool {
     ALLOWED_HOSTS.iter().any(|allowed| host == *allowed)
 }
 
+/// 登录态请求可能按上游 API 约定把 cookie 放在 query/form 中，因此必须强制 HTTPS。
+fn ensure_secure_cookie_transport(url: &reqwest::Url, cookie: Option<&str>) -> Result<(), String> {
+    if cookie.filter(|cookie| !cookie.is_empty()).is_some() && url.scheme() != "https" {
+        return Err("Authenticated API requests require HTTPS".to_string());
+    }
+    Ok(())
+}
+
 /// POST/GET 代理：将前端请求转发到 Netease API，并回传 cookie 变更。
 #[tauri::command]
 pub async fn ncm_request(
@@ -32,7 +40,8 @@ pub async fn ncm_request(
         }
     }
     let method = request.method.to_uppercase();
-    let cookie = request.cookie.as_deref();
+    let cookie = request.cookie.as_deref().filter(|cookie| !cookie.is_empty());
+    ensure_secure_cookie_transport(&url, cookie)?;
 
     let mut builder = match method.as_str() {
         "GET" => {
@@ -46,7 +55,7 @@ pub async fn ncm_request(
     builder = builder.header(USER_AGENT, APP_USER_AGENT);
     builder = builder.header("Referer", "https://music.163.com/");
 
-    if let Some(cookie) = cookie.filter(|cookie| !cookie.is_empty()) {
+    if let Some(cookie) = cookie {
         let value =
             HeaderValue::from_str(cookie).map_err(|error| format!("Invalid cookie: {error}"))?;
         builder = builder.header(COOKIE, value);
@@ -62,7 +71,8 @@ pub async fn ncm_request(
     let response = builder
         .send()
         .await
-        .map_err(|error| format!("API request failed: {error}"))?;
+        // reqwest 错误默认可能携带完整 URL；URL 中可能有 cookie query，必须移除。
+        .map_err(|error| format!("API request failed: {}", error.without_url()))?;
     let status = response.status();
     let cookie = collect_set_cookie(response.headers());
     let data = response.json::<Value>().await.unwrap_or_else(
@@ -108,7 +118,8 @@ fn append_query_pairs(url: &mut reqwest::Url, params: &Value, cookie: Option<&st
             }
             pairs.append_pair(key, &value_to_string(value));
         }
-        if let Some(cookie) = cookie.filter(|cookie| !cookie.is_empty()) {
+        // NeteaseCloudMusicApi 兼容层依赖 cookie 参数；传输层已在上方强制 HTTPS。
+        if let Some(cookie) = cookie {
             pairs.append_pair("cookie", cookie);
         }
     }
@@ -124,7 +135,7 @@ fn value_to_form_pairs(body: &Value, cookie: Option<&str>) -> Vec<(String, Strin
             pairs.push((key.clone(), value_to_string(value)));
         }
     }
-    if let Some(cookie) = cookie.filter(|cookie| !cookie.is_empty()) {
+    if let Some(cookie) = cookie {
         pairs.push(("cookie".to_string(), cookie.to_string()));
     }
     pairs
@@ -170,5 +181,15 @@ mod tests {
         headers.append(SET_COOKIE, HeaderValue::from_bytes(&[0xff]).unwrap());
 
         assert_eq!(collect_set_cookie(&headers), "");
+    }
+
+    #[test]
+    fn authenticated_requests_require_https() {
+        let secure = reqwest::Url::parse("https://music.xubuyuan.top/song/url").unwrap();
+        let insecure = reqwest::Url::parse("http://music.xubuyuan.top/song/url").unwrap();
+
+        assert!(ensure_secure_cookie_transport(&secure, Some("MUSIC_U=token")).is_ok());
+        assert!(ensure_secure_cookie_transport(&insecure, None).is_ok());
+        assert!(ensure_secure_cookie_transport(&insecure, Some("MUSIC_U=token")).is_err());
     }
 }
