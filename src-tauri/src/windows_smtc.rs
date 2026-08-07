@@ -60,7 +60,6 @@ impl WindowsSmtcState {
         let thread_pending_action = Arc::clone(&pending_action);
 
         thread::spawn(move || {
-            // COM 是线程绑定的，本线程只初始化一次；重连时复用同一 apartment。
             unsafe {
                 if let Err(error) = CoInitializeEx(None, COINIT_MULTITHREADED).ok() {
                     log::error!(
@@ -75,7 +74,6 @@ impl WindowsSmtcState {
                     log::warn!("Windows SMTC disconnected: {error}, reconnecting in 5s...");
                     std::thread::sleep(Duration::from_secs(5));
                 } else {
-                    // run_smtc 正常返回 = receiver 关闭（应用退出），结束线程
                     log::debug!("Windows SMTC channel closed, exiting SMTC thread");
                     return;
                 }
@@ -106,13 +104,11 @@ impl WindowsSmtcState {
     }
 
     pub fn update_playback_state(&self, playing: bool, position: f64, duration: f64) {
-        let _ = self
-            .sender
-            .try_send(WindowsSmtcMessage::Playback {
-                playing,
-                position,
-                duration,
-            });
+        let _ = self.sender.try_send(WindowsSmtcMessage::Playback {
+            playing,
+            position,
+            duration,
+        });
     }
 
     pub fn poll_pending_action(&self) -> String {
@@ -128,23 +124,14 @@ fn run_smtc(
     receiver: &Receiver<WindowsSmtcMessage>,
     pending_action: &Arc<Mutex<Option<String>>>,
 ) -> windows::core::Result<()> {
-    // COM 在外层线程入口已初始化一次，本函数不再重复初始化。
-
-    // MediaPlayer 只作为桌面 SMTC host，实际音频仍由 WebView 播放。
     let player = MediaPlayer::new()?;
-    // 手动控制 SMTC 时关闭 MediaPlayer 自带的自动 CommandManager，避免第二套自动集成。
-    player.CommandManager()?.SetIsEnabled(false)?;
-
-    // Get the SystemMediaTransportControls
     let smtc = player.SystemMediaTransportControls()?;
 
-    // Enable buttons
     smtc.SetIsPlayEnabled(true)?;
     smtc.SetIsPauseEnabled(true)?;
     smtc.SetIsNextEnabled(true)?;
     smtc.SetIsPreviousEnabled(true)?;
 
-    // Register button handler
     let button_handler = Arc::clone(pending_action);
     smtc.ButtonPressed(&TypedEventHandler::new(
         move |_, args: &Option<SystemMediaTransportControlsButtonPressedEventArgs>| {
@@ -166,7 +153,6 @@ fn run_smtc(
         },
     ))?;
 
-    // Windows 进度条拖动 → 复用 pending action 通道回传给前端播放器。
     let seek_handler = Arc::clone(pending_action);
     smtc.PlaybackPositionChangeRequested(&TypedEventHandler::new(
         move |_, args: &Option<PlaybackPositionChangeRequestedEventArgs>| {
@@ -179,7 +165,6 @@ fn run_smtc(
         },
     ))?;
 
-    // Get display updater
     let display_updater = smtc.DisplayUpdater()?;
     let cover_client = match Client::builder()
         .timeout(Duration::from_secs(5))
@@ -201,7 +186,6 @@ fn run_smtc(
         }
     };
 
-    // Process messages
     while let Ok(message) = receiver.recv_blocking() {
         match message {
             WindowsSmtcMessage::Metadata {
@@ -211,7 +195,6 @@ fn run_smtc(
                 cover_url,
                 duration: _,
             } => {
-                // 每次元数据变化先清空，避免清歌/无封面歌曲继承上一首封面。
                 display_updater.ClearAll()?;
                 display_updater.SetType(windows::Media::MediaPlaybackType::Music)?;
                 let music_properties = display_updater.MusicProperties()?;
@@ -219,8 +202,6 @@ fn run_smtc(
                 music_properties.SetArtist(&HSTRING::from(&artist))?;
                 music_properties.SetAlbumTitle(&HSTRING::from(&album))?;
 
-                // 桌面 SMTC 对远程 URI 的 Thumbnail 加载并不稳定：由 Rust 先下载封面，
-                // 再写入 WinRT 内存流，确保系统媒体控件/Lyricify 能拿到真实图片字节。
                 if !cover_url.is_empty() {
                     if let (Some(client), Some(runtime)) =
                         (cover_client.as_ref(), cover_runtime.as_ref())
@@ -260,11 +241,8 @@ fn run_smtc(
                     MediaPlaybackStatus::Paused
                 };
 
-                // 实际音频由 WebView 播放；这里只同步系统媒体状态。
                 smtc.SetPlaybackStatus(status)?;
 
-                // 时间轴: SMTC 客户端(Lyricify 等)与系统媒体浮窗靠它同步歌词/进度条。
-                // TimeSpan 单位为 100ns,秒 = 1e7 tick。
                 let duration = duration.max(0.0);
                 let position = if duration > 0.0 {
                     position.max(0.0).min(duration)
