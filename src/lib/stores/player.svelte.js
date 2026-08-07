@@ -105,6 +105,7 @@ class PlayerState {
       getMetadata: () => ({
         title: this.title,
         artist: this.artist,
+        album: this.currentTrack?.al?.name || '',
         cover: this.cover,
         duration: this.duration > 0 ? this.duration : 0,
       }),
@@ -352,6 +353,10 @@ class PlayerState {
     else if (action === 'pause') { engine.pause() }
     else if (action === 'next') { this.next() }
     else if (action === 'prev') { this.prev() }
+    else if (typeof action === 'string' && action.startsWith('seek:')) {
+      const seconds = Number(action.slice(5))
+      if (Number.isFinite(seconds)) this.seek(seconds)
+    }
   }
 
   /**
@@ -432,7 +437,7 @@ class PlayerState {
       navigator.mediaSession.metadata = new MediaMetadata({
         title: this.title,
         artist: this.artist,
-        album: '',
+        album: this.currentTrack?.al?.name || '',
         artwork: [{ src: coverUrl(this.cover, 512), sizes: '512x512', type: 'image/jpeg' }],
       })
     }
@@ -535,7 +540,6 @@ class PlayerState {
           this._fallbackNext()
         }
       }
-
 
       // 持久化最新 URL 到 IndexedDB
       if (result.length > 0 && result[0] !== FALLBACK_URL_TEMPLATE(id)) {
