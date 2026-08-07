@@ -259,14 +259,33 @@ class PlayerState {
     }, PLAYBACK.SAVE_INTERVAL)
   }
 
-  /** loading 超时保护：15 秒后自动解除 loading */
-  _startLoadingTimeout() {
+  /** 让当前异步播放请求失效；resetAudio 用于彻底停止并释放当前音频。 */
+  _invalidatePlaybackRequest({ resetAudio = false } = {}) {
+    this._abortController.abort()
+    this._abortController = new AbortController()
+    this._playRequestId++
+    this._waitingForFill = false
+    this._restoreSeeking = false
+    this._shouldAutoPlay = false
+    if (resetAudio) engine.reset()
+    else engine.pause()
+  }
+
+  /** loading 超时保护：超时后取消当前请求，避免迟到结果重新开始播放。 */
+  _startLoadingTimeout(requestId = this._playRequestId) {
     this._clearLoadingTimer()
     this._loadingTimer = setTimeout(() => {
-      if (this.loading) {
-        this.loading = false
-        this._setPlayerError('LoadingTimeout', { kind: ERROR_KIND.TIMEOUT, message: '播放加载超时' }, ERROR_MESSAGES.PLAY_FAILED)
-      }
+      if (!this.loading || requestId !== this._playRequestId) return
+      this._invalidatePlaybackRequest()
+      this.loading = false
+      this.playing = false
+      syncNativeMedia()
+      this._setPlayerError(
+        'LoadingTimeout',
+        { kind: ERROR_KIND.TIMEOUT, message: '播放加载超时' },
+        ERROR_MESSAGES.PLAY_FAILED,
+        { timedOutRequestId: requestId },
+      )
     }, 15000)
   }
 
@@ -405,7 +424,7 @@ class PlayerState {
     this.playing = false
     this._shouldAutoPlay = true
     this._clearError()
-    this._startLoadingTimeout()
+    this._startLoadingTimeout(requestId)
     debugLog('player', 'play-track', { id: playableTrack.id, index, preferredLevel: this.preferredLevel })
 
     // 更新 Web Media Session 元数据（原生媒体会话平台由 syncNativeMedia 负责）
@@ -697,16 +716,30 @@ class PlayerState {
   }
 
   _clearCurrentTrack() {
+    this._clearLoadingTimer()
+    this._invalidatePlaybackRequest({ resetAudio: true })
+    this._fallback.updateUrls([])
+    this._firstUrlLevel = ''
     this.id = 0
     this.title = ''
     this.artist = ''
     this.cover = ''
     this.duration = 0
+    this.currentTime = 0
     this.currentTrack = null
     this.playing = false
+    this.loading = false
     this.queueIndex = -1
     this._clearError()
     this._persistState()
+    setStorage(STORAGE_KEYS.PLAYER_TIME, 0)
+
+    if (shouldUseWebMediaSession() && typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
+      try { navigator.mediaSession.metadata = null } catch { /* ignore */ }
+      try { navigator.mediaSession.playbackState = 'none' } catch { /* ignore */ }
+      try { navigator.mediaSession.setPositionState?.() } catch { /* ignore */ }
+    }
+    syncNativeMedia()
   }
 
   // ==========================================
@@ -745,7 +778,7 @@ class PlayerState {
     this.playing = false
     this.loading = true
     this._clearError()
-    this._startLoadingTimeout()
+    this._startLoadingTimeout(requestId)
 
     abortAllRequests()
     this._abortController.abort()
