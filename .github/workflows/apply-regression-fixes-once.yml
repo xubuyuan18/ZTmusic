@@ -1,0 +1,82 @@
+name: Apply Regression Fixes Once
+
+on:
+  push:
+    branches:
+      - agent/fix-lyrics-loader-regression
+    paths:
+      - '.github/workflows/apply-regression-fixes-once.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: agent/fix-lyrics-loader-regression
+          fetch-depth: 0
+      - name: Apply focused source changes
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          resolver_path = Path('src/lib/player/url-resolver.js')
+          source = resolver_path.read_text(encoding='utf-8')
+
+          old_trial = """      if (result.isTrial) {
+                addCandidate(trialCandidates, result)
+              } else {
+          """
+          new_trial = """      if (result.isTrial) {
+                addCandidate(trialCandidates, result)
+                // The backend can return a valid unblock trial URL while the
+                // normal endpoint returns code=404. Start playback with the first
+                // usable trial immediately instead of spending more seconds on
+                // match/old fallbacks and risking the player loading timeout.
+                firstUrlLevel = level + '+unblock'
+                break
+              } else {
+          """
+          if old_trial not in source:
+              raise SystemExit('Phase 2 trial block not found')
+          source = source.replace(old_trial, new_trial, 1)
+
+          marker = """  // Phase 3: 官方 match 解灰
+          """
+          promotion = """  // Phase 2.5: unblock 已拿到可播放试听 URL 时立即出声。
+            // match / 旧 API 留给完全没有可播放 URL 的情况，避免首播被额外网络请求拖慢。
+            if (candidates.length === 0 && trialCandidates.length > 0) {
+              trialCandidates.forEach(candidate => addCandidate(candidates, { ...candidate, cacheable: false }))
+              if (!firstUrlLevel) {
+                const firstTrial = trialCandidates[0]
+                firstUrlLevel = firstTrial?.level
+                  ? `${firstTrial.level}${firstTrial.source === 'official-unblock' ? '+unblock' : ''}`
+                  : 'trial'
+              }
+            }
+
+            // Phase 3: 官方 match 解灰
+          """
+          if marker not in source:
+              raise SystemExit('Phase 3 marker not found')
+          source = source.replace(marker, promotion, 1)
+          resolver_path.write_text(source, encoding='utf-8')
+
+          Path('src/lib/player/url-resolver-trial.test.js').write_text("""import assert from 'node:assert/strict'\nimport { readFile } from 'node:fs/promises'\n\nconst source = await readFile(new URL('./url-resolver.js', import.meta.url), 'utf8')\nconst phase2Start = source.indexOf('// Phase 2: unblock')\nconst promotion = source.indexOf('// Phase 2.5: unblock')\nconst phase3 = source.indexOf('// Phase 3: 官方 match')\n\nassert.ok(phase2Start >= 0, 'unblock phase should exist')\nassert.ok(promotion > phase2Start, 'trial promotion should happen after unblock lookup')\nassert.ok(phase3 > promotion, 'trial URL should be promoted before match/old fallbacks')\nconst phase2 = source.slice(phase2Start, promotion)\nassert.match(phase2, /if \(result\.isTrial\)[\\s\\S]*?firstUrlLevel = level \+ '\\+unblock'[\\s\\S]*?break/, 'first unblock trial should stop further foreground URL probing')\n\nconsole.log('url resolver immediate trial fallback regression test passed')\n""", encoding='utf-8')
+
+          Path('src/lib/composables/use-lyrics-direct.test.js').write_text("""import assert from 'node:assert/strict'\nimport { readFile } from 'node:fs/promises'\n\nconst source = await readFile(new URL('./useLyrics.svelte.js', import.meta.url), 'utf8')\nconst baseFetch = source.indexOf('await ncm.lyric(id)')\nconst publish = source.indexOf('lyrics = base.lines.map', baseFetch)\nconst loadingDone = source.indexOf('loading = false', publish)\nconst yrcFetch = source.indexOf('await ncm.lyricNew(id)', loadingDone)\n\nassert.ok(baseFetch >= 0, 'player lyrics should fetch /lyric directly')\nassert.ok(publish > baseFetch, 'regular LRC should be published into player state')\nassert.ok(loadingDone > publish, 'basic lyric loading should finish after regular LRC is published')\nassert.ok(yrcFetch > loadingDone, '/lyric/new must be an enhancement and must not gate basic lyric display')\nassert.match(source, /parseLyricResponse\(res \|\| \{\}\)/, 'regular lyric response should use the existing parser')\n\nconsole.log('direct in-player lyrics regression test passed')\n""", encoding='utf-8')
+          PY
+      - name: Commit focused fixes
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/lib/player/url-resolver.js src/lib/player/url-resolver-trial.test.js src/lib/composables/use-lyrics-direct.test.js
+          git diff --cached --check
+          git commit -m "fix prioritize playable trial fallback"
+          git push origin HEAD:agent/fix-lyrics-loader-regression
