@@ -10,6 +10,7 @@ enum LinuxMprisMessage {
     Metadata {
         title: String,
         artist: String,
+        album: String,
         cover_url: String,
         duration: f64,
     },
@@ -59,10 +60,18 @@ impl LinuxMprisState {
         }
     }
 
-    pub fn update_metadata(&self, title: String, artist: String, cover_url: String, duration: f64) {
+    pub fn update_metadata(
+        &self,
+        title: String,
+        artist: String,
+        album: String,
+        cover_url: String,
+        duration: f64,
+    ) {
         let _ = self.sender.try_send(LinuxMprisMessage::Metadata {
             title,
             artist,
+            album,
             cover_url,
             duration,
         });
@@ -140,12 +149,14 @@ async fn run_mpris(
                 LinuxMprisMessage::Metadata {
                     title,
                     artist,
+                    album,
                     cover_url,
                     duration,
                 } => {
                     let mut builder = Metadata::builder()
                         .title(title)
                         .artist(split_artists(&artist))
+                        .album(album)
                         .length(seconds_to_time(duration));
                     if !cover_url.is_empty() {
                         builder = builder.art_url(cover_url);
