@@ -56,3 +56,5 @@ jobs:
           name: zheting-windows-x64-pr7-web-media-session
           path: src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/**
           if-no-files-found: error
+
+# rerun after restoring NcmResponse
