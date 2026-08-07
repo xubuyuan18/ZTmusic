@@ -3,8 +3,9 @@ use std::thread;
 use std::time::Duration;
 
 use async_channel::{unbounded, Receiver, Sender};
-use reqwest::blocking::Client;
 use reqwest::header::REFERER;
+use reqwest::Client;
+use tokio::runtime::Runtime;
 use windows::core::HSTRING;
 use windows::Foundation::{TimeSpan, TypedEventHandler};
 use windows::Media::Playback::MediaPlayer;
@@ -190,6 +191,13 @@ fn run_smtc(
             None
         }
     };
+    let cover_runtime = match Runtime::new() {
+        Ok(runtime) => Some(runtime),
+        Err(error) => {
+            log::warn!("SMTC cover Tokio runtime init failed: {error}");
+            None
+        }
+    };
 
     // Process messages
     while let Ok(message) = receiver.recv_blocking() {
@@ -212,8 +220,13 @@ fn run_smtc(
                 // 桌面 SMTC 对远程 URI 的 Thumbnail 加载并不稳定：由 Rust 先下载封面，
                 // 再写入 WinRT 内存流，确保系统媒体控件/Lyricify 能拿到真实图片字节。
                 if !cover_url.is_empty() {
-                    if let Some(client) = cover_client.as_ref() {
-                        match fetch_cover_thumbnail(client, &cover_url) {
+                    if let (Some(client), Some(runtime)) =
+                        (cover_client.as_ref(), cover_runtime.as_ref())
+                    {
+                        let thumbnail_result = runtime
+                            .block_on(fetch_cover_bytes(client, &cover_url))
+                            .and_then(|bytes| create_cover_thumbnail(&bytes));
+                        match thumbnail_result {
                             Ok(thumbnail) => {
                                 display_updater.SetThumbnail(&thumbnail)?;
                             }
@@ -278,10 +291,7 @@ fn run_smtc(
     Ok(())
 }
 
-fn fetch_cover_thumbnail(
-    client: &Client,
-    cover_url: &str,
-) -> Result<RandomAccessStreamReference, String> {
+async fn fetch_cover_bytes(client: &Client, cover_url: &str) -> Result<Vec<u8>, String> {
     let url = reqwest::Url::parse(cover_url).map_err(|_| "invalid cover URL".to_string())?;
     if url.scheme() != "https" {
         return Err("cover URL must use HTTPS".to_string());
@@ -295,6 +305,7 @@ fn fetch_cover_thumbnail(
         .get(url)
         .header(REFERER, "https://music.163.com/")
         .send()
+        .await
         .map_err(|error| format!("cover request failed: {}", error.without_url()))?;
 
     if !response.status().is_success() {
@@ -309,17 +320,22 @@ fn fetch_cover_thumbnail(
 
     let bytes = response
         .bytes()
+        .await
         .map_err(|error| format!("cover body read failed: {}", error.without_url()))?;
     if bytes.len() as u64 > MAX_COVER_BYTES {
         return Err("cover image is too large".to_string());
     }
 
+    Ok(bytes.to_vec())
+}
+
+fn create_cover_thumbnail(bytes: &[u8]) -> Result<RandomAccessStreamReference, String> {
     let stream = InMemoryRandomAccessStream::new()
         .map_err(|error| format!("cover stream create failed: {error}"))?;
     let writer = DataWriter::CreateDataWriter(&stream)
         .map_err(|error| format!("cover writer create failed: {error}"))?;
     writer
-        .WriteBytes(bytes.as_ref())
+        .WriteBytes(bytes)
         .map_err(|error| format!("cover stream write failed: {error}"))?;
     writer
         .StoreAsync()
