@@ -68,5 +68,12 @@ engine.pause()
 await engine.play()
 assert.deepEqual(calls, ['first', 'second', 'second'], 'unsubscribe should remove only one listener')
 
+engine.load('https://example.test/song.mp3')
+assert.match(engine.src, /song\.mp3$/, 'load should set the active source')
+engine.reset()
+assert.equal(engine.src, '', 'reset should release the active source')
+assert.equal(engine.preloadedSrc, '', 'reset should also release the preload source')
+assert.equal(engine.paused, true, 'reset should leave the engine paused')
+
 engine.destroy()
-console.log('engine event subscription tests passed')
+console.log('engine event subscription and reset tests passed')
