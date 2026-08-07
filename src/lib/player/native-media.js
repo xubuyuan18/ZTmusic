@@ -2,10 +2,10 @@
  * 原生媒体会话管理
  * - Android 通知栏（通过 Tauri Kotlin Plugin）
  * - Linux 桌面 MPRIS（通过 Tauri Rust 后端）
- * - Windows 桌面 SMTC（通过 Tauri Rust 后端）
+ * - Windows 桌面使用 WebView2 / Web Media Session，避免额外创建第二个 SMTC session
  * - 浏览器/macOS 使用 Web Media Session API（由 PlayerState 直接维护）
  *
- * 职责：仅处理原生平台媒体控件的双向同步，不涉及播放逻辑。
+ * 职责：仅处理需要原生桥接的平台媒体控件双向同步，不涉及播放逻辑。
  */
 
 import { PLAYBACK } from '../utils/constants.js'
@@ -41,12 +41,12 @@ function isTauriWindows() {
   return /Win/i.test(platform)
 }
 
-/** Tauri 中由原生层拥有媒体会话的平台。 */
+/** Tauri 中仍需要原生媒体桥接的平台。Windows 直接复用 WebView2 自带的 SMTC。 */
 export function shouldUseNativeBridge() {
-  return isTauriAndroid() || isTauriLinux() || isTauriWindows()
+  return isTauriAndroid() || isTauriLinux()
 }
 
-/** 避免 Web Media Session 与原生媒体会话在同一平台重复注册。 */
+/** Windows/browser/macOS 使用 Web Media Session；Android/Linux 由 native bridge 接管。 */
 export function shouldUseWebMediaSession() {
   return !shouldUseNativeBridge()
 }
@@ -71,7 +71,7 @@ export async function initNativeMedia(options = {}) {
   _getPlaybackState = options.getPlaybackState || _getPlaybackState
   _onMediaButton = options.onMediaButton || _onMediaButton
 
-  debugLog('native-media', 'init', { runtime: isTauriRuntime(), android: isTauriAndroid(), linux: isTauriLinux(), windows: isTauriWindows() })
+  debugLog('native-media', 'init', { runtime: isTauriRuntime(), android: isTauriAndroid(), linux: isTauriLinux(), windows: isTauriWindows(), nativeBridge: shouldUseNativeBridge(), webMediaSession: shouldUseWebMediaSession() })
   if (!isTauriRuntime() || typeof window === 'undefined') return
 
   try {
@@ -97,7 +97,7 @@ export async function initNativeMedia(options = {}) {
     }
   }
 
-  // Android 轮询作为通知栏按钮兜底；Linux/Windows 轮询原生媒体键回调。
+  // Android 轮询作为通知栏按钮兜底；Linux 轮询原生媒体键回调。
   if (shouldUseNativeBridge() && _tauriInvoke && !_nativeMediaPollTimer) {
     const interval = isTauriAndroid() ? PLAYBACK.NATIVE_ANDROID_POLL_INTERVAL : PLAYBACK.NATIVE_POLL_INTERVAL
     _nativeMediaPollTimer = setInterval(() => {
