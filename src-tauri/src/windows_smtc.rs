@@ -1,17 +1,26 @@
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Duration;
 
 use async_channel::{unbounded, Receiver, Sender};
+use reqwest::blocking::Client;
+use reqwest::header::REFERER;
 use windows::core::HSTRING;
-use windows::Foundation::{TimeSpan, TypedEventHandler, Uri};
+use windows::Foundation::{TimeSpan, TypedEventHandler};
 use windows::Media::Playback::MediaPlayer;
 use windows::Media::{
     MediaPlaybackStatus, PlaybackPositionChangeRequestedEventArgs,
     SystemMediaTransportControlsButton, SystemMediaTransportControlsButtonPressedEventArgs,
     SystemMediaTransportControlsTimelineProperties,
 };
-use windows::Storage::Streams::RandomAccessStreamReference;
+use windows::Storage::Streams::{
+    DataWriter, InMemoryRandomAccessStream, RandomAccessStreamReference,
+};
 use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED};
+
+use crate::APP_USER_AGENT;
+
+const MAX_COVER_BYTES: u64 = 5 * 1024 * 1024;
 
 struct ComApartment;
 
@@ -63,7 +72,7 @@ impl WindowsSmtcState {
             loop {
                 if let Err(error) = run_smtc(&receiver, &thread_pending_action) {
                     log::warn!("Windows SMTC disconnected: {error}, reconnecting in 5s...");
-                    std::thread::sleep(std::time::Duration::from_secs(5));
+                    std::thread::sleep(Duration::from_secs(5));
                 } else {
                     // run_smtc 正常返回 = receiver 关闭（应用退出），结束线程
                     log::debug!("Windows SMTC channel closed, exiting SMTC thread");
@@ -169,6 +178,18 @@ fn run_smtc(
 
     // Get display updater
     let display_updater = smtc.DisplayUpdater()?;
+    let cover_client = match Client::builder()
+        .timeout(Duration::from_secs(5))
+        .redirect(reqwest::redirect::Policy::limited(3))
+        .user_agent(APP_USER_AGENT)
+        .build()
+    {
+        Ok(client) => Some(client),
+        Err(error) => {
+            log::warn!("SMTC cover HTTP client init failed: {}", error.without_url());
+            None
+        }
+    };
 
     // Process messages
     while let Ok(message) = receiver.recv_blocking() {
@@ -188,16 +209,17 @@ fn run_smtc(
                 music_properties.SetArtist(&HSTRING::from(&artist))?;
                 music_properties.SetAlbumTitle(&HSTRING::from(&album))?;
 
-                // WinRT 可直接从 http(s) URI 创建专辑封面流引用，无需在 Rust 侧下载图片。
+                // 桌面 SMTC 对远程 URI 的 Thumbnail 加载并不稳定：由 Rust 先下载封面，
+                // 再写入 WinRT 内存流，确保系统媒体控件/Lyricify 能拿到真实图片字节。
                 if !cover_url.is_empty() {
-                    match Uri::CreateUri(&HSTRING::from(&cover_url))
-                        .and_then(|uri| RandomAccessStreamReference::CreateFromUri(&uri))
-                    {
-                        Ok(thumbnail) => {
-                            display_updater.SetThumbnail(&thumbnail)?;
-                        }
-                        Err(error) => {
-                            log::warn!("SMTC cover URI rejected: {error}");
+                    if let Some(client) = cover_client.as_ref() {
+                        match fetch_cover_thumbnail(client, &cover_url) {
+                            Ok(thumbnail) => {
+                                display_updater.SetThumbnail(&thumbnail)?;
+                            }
+                            Err(error) => {
+                                log::warn!("SMTC cover load failed: {error}");
+                            }
                         }
                     }
                 }
@@ -254,6 +276,71 @@ fn run_smtc(
     }
 
     Ok(())
+}
+
+fn fetch_cover_thumbnail(
+    client: &Client,
+    cover_url: &str,
+) -> Result<RandomAccessStreamReference, String> {
+    let url = reqwest::Url::parse(cover_url).map_err(|_| "invalid cover URL".to_string())?;
+    if url.scheme() != "https" {
+        return Err("cover URL must use HTTPS".to_string());
+    }
+    let host = url.host_str().ok_or_else(|| "cover URL missing host".to_string())?;
+    if !is_allowed_cover_host(host) {
+        return Err(format!("cover host not allowed: {host}"));
+    }
+
+    let response = client
+        .get(url)
+        .header(REFERER, "https://music.163.com/")
+        .send()
+        .map_err(|error| format!("cover request failed: {}", error.without_url()))?;
+
+    if !response.status().is_success() {
+        return Err(format!("cover request returned HTTP {}", response.status()));
+    }
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_COVER_BYTES)
+    {
+        return Err("cover image is too large".to_string());
+    }
+
+    let bytes = response
+        .bytes()
+        .map_err(|error| format!("cover body read failed: {}", error.without_url()))?;
+    if bytes.len() as u64 > MAX_COVER_BYTES {
+        return Err("cover image is too large".to_string());
+    }
+
+    let stream = InMemoryRandomAccessStream::new()
+        .map_err(|error| format!("cover stream create failed: {error}"))?;
+    let writer = DataWriter::CreateDataWriter(&stream)
+        .map_err(|error| format!("cover writer create failed: {error}"))?;
+    writer
+        .WriteBytes(bytes.as_ref())
+        .map_err(|error| format!("cover stream write failed: {error}"))?;
+    writer
+        .StoreAsync()
+        .and_then(|operation| operation.get())
+        .map_err(|error| format!("cover stream store failed: {error}"))?;
+    writer
+        .DetachStream()
+        .map_err(|error| format!("cover writer detach failed: {error}"))?;
+    stream
+        .Seek(0)
+        .map_err(|error| format!("cover stream rewind failed: {error}"))?;
+
+    RandomAccessStreamReference::CreateFromStream(&stream)
+        .map_err(|error| format!("cover stream reference failed: {error}"))
+}
+
+fn is_allowed_cover_host(host: &str) -> bool {
+    host == "music.126.net"
+        || host.ends_with(".music.126.net")
+        || host == "music.163.com"
+        || host.ends_with(".music.163.com")
 }
 
 fn set_pending_action(action: &Arc<Mutex<Option<String>>>, value: &str) {
