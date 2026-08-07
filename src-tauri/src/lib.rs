@@ -40,6 +40,13 @@ pub(crate) struct NcmRequest {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct NcmResponse {
+    pub(crate) data: Value,
+    pub(crate) cookie: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 #[cfg_attr(not(target_os = "android"), allow(dead_code))]
 pub(crate) struct NativeMetadataPayload {
     pub(crate) title: String,
