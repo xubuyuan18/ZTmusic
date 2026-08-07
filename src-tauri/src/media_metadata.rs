@@ -4,7 +4,8 @@ use crate::NativeMediaState;
 #[cfg(target_os = "android")]
 use crate::NativeMetadataPayload;
 
-/// 更新原生媒体元数据（Android 通知栏 / Linux MPRIS / Windows SMTC）。
+/// 更新需要原生桥接的平台媒体元数据（Android 通知栏 / Linux MPRIS）。
+/// Windows 由 WebView2 / Web Media Session 直接向系统暴露元数据。
 #[allow(non_snake_case)]
 #[tauri::command]
 pub fn updateMetadata(
@@ -41,14 +42,7 @@ pub fn updateMetadata(
             .update_metadata(title, artist, album, coverUrl, duration);
     }
 
-    #[cfg(target_os = "windows")]
-    {
-        state
-            .smtc
-            .update_metadata(title, artist, album, coverUrl, duration);
-    }
-
-    #[cfg(not(any(target_os = "android", target_os = "linux", target_os = "windows")))]
+    #[cfg(not(any(target_os = "android", target_os = "linux")))]
     {
         let _ = (state, title, artist, album, coverUrl, duration);
     }
