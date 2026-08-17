@@ -12,7 +12,9 @@ rust-version = "1.88.0"
 
 [lib]
 name = "app_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+# staticlib (iOS) / cdylib (Android .so) 是移动端才需要的产物，安卓端已放弃。
+# 桌面端 main.rs 只是 app_lib::run()，rlib 足够。
+crate-type = ["rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2.6.2", features = [] }
@@ -25,8 +27,6 @@ tauri = { version = "2.11.2", features = [] }
 tauri-plugin-log = "2"
 reqwest = { version = "0.12", default-features = false, features = ["json", "cookies", "rustls-tls"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-
-[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-window-state = "2"
 tauri-plugin-single-instance = "2"
 

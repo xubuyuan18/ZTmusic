@@ -18,7 +18,7 @@ process.env.http_proxy = ''
 process.env.HTTPS_PROXY = ''
 process.env.https_proxy = ''
 
-// Tauri/Android 的 WebView 通过自定义协议加载资源，带 crossorigin 的 module 脚本/样式
+// Tauri 的 WebView 通过自定义协议加载资源，带 crossorigin 的 module 脚本/样式
 // 会因 CORS 被拦截，导致只显示未渲染的裸 HTML。此插件移除 crossorigin 属性。
 // - transformIndexHtml：处理 index.html 里的静态入口标签
 // - generateBundle：处理 Vite 预加载 helper 运行时动态注入的 <link>/<script>
@@ -45,7 +45,11 @@ const stripCrossorigin = () => ({
 export default defineConfig({
   base: './',
   build: {
-    // Android WebView 兼容性：禁用 CSS 动态注入和 modulepreload
+    // 禁用 CSS 动态注入和 modulepreload：动态注入的 <link>/<script> 会自带 crossorigin，
+    // 在 Tauri 自定义协议下被 CORS 拦截（与上面的 stripCrossorigin 配套）。
+    // ponytail: target 'chrome100' 原是为兼容 Android WebView（minSdk 24）而压低的。
+    // 安卓端已放弃，桌面端 WebView2 是 evergreen、能吃更高的 target；但 Linux 的
+    // WebKitGTK 不是 Chromium，抬高 target 需要 Windows + Linux 两端实机验证，暂不动。
     target: 'chrome100',
     cssCodeSplit: false,
     modulePreload: false,

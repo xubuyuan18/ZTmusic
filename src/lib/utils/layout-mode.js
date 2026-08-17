@@ -2,42 +2,6 @@ import { getSetting, setSetting } from './settings.js'
 
 export const LAYOUT_MODE_KEY = 'layout_mode'
 
-const PHONE_MAX_SHORT_SIDE = 600
-
-/** 是否为 Android APK 环境 (Capacitor/Cordova) */
-export function isAndroidApp() {
-  if (typeof window === 'undefined' || typeof navigator === 'undefined') return false
-  const ua = navigator.userAgent?.toLowerCase() || ''
-  return ua.includes('android') && (
-    // Capacitor 特征
-    ua.includes('capacitor') ||
-    // Cordova/WebView 特征
-    ua.includes('wv') ||
-    window.location?.protocol === 'file:' ||
-    // 存在 Cordova 全局对象
-    typeof window.Cordova !== 'undefined' ||
-    typeof window.cordova !== 'undefined'
-  )
-}
-
-/** 是否为 iOS APP 环境 */
-export function isIosApp() {
-  if (typeof window === 'undefined' || typeof navigator === 'undefined') return false
-  const ua = navigator.userAgent?.toLowerCase() || ''
-  return (ua.includes('iphone') || ua.includes('ipad')) && (
-    ua.includes('capacitor') ||
-    ua.includes('wv') ||
-    window.location?.protocol === 'file:' ||
-    typeof window.Cordova !== 'undefined' ||
-    typeof window.cordova !== 'undefined'
-  )
-}
-
-/** 是否为原生 APP 环境(APK/IPA),强制移动端布局 */
-export function isNativeApp() {
-  return isAndroidApp() || isIosApp()
-}
-
 export function getLayoutMode() {
   return getSetting(LAYOUT_MODE_KEY, 'auto')
 }
@@ -48,11 +12,6 @@ export function setLayoutMode(value) {
     window.dispatchEvent(new CustomEvent('layout-mode-change', { detail: mode }))
   }
   return mode
-}
-
-export function isPhoneLayoutViewport(width, height) {
-  const shortSide = Math.min(width || 0, height || 0)
-  return shortSide > 0 && shortSide <= PHONE_MAX_SHORT_SIDE
 }
 
 /** URL 带 ?mobile 时强制手持端布局（调试用），供各处统一判定 */
@@ -68,11 +27,7 @@ export function shouldUseMobileLayout(width, height, mode = getLayoutMode()) {
   // 用户显式设置
   if (mode === 'mobile') return true
   if (mode === 'pc') return false
-  
-  // 原生 APP 环境(APK/IPA)默认移动端布局
-  // 注意：用户已显式设置为 PC 时不受此限制
-  if (isNativeApp()) return true
-  
+
   // auto 模式：优先判定触摸设备，再参考短边
   // 注意：PC 浏览器窗口较矮时，短边可能 <600，不应误判为移动端
   // 所以需要结合触摸设备判定，或者放宽条件

@@ -92,6 +92,7 @@ export function createPrefetchManager() {
     const prefetchId = ++activePrefetchId
     if (queue.length < 2 || queueIndex < 0 || isStale()) return null
 
+    // peek 而已：不推进洗牌指针，切歌由 player.next() 负责 commit
     const nextIdx = getNextIndex({ currentIndex: queueIndex, queueLength: queue.length, mode, shuffleState })
     if (nextIdx < 0 || nextIdx === queueIndex) return null
     const nextTrack = queue[nextIdx]

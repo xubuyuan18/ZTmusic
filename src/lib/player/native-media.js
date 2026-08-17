@@ -1,6 +1,5 @@
 /**
  * 原生媒体会话管理
- * - Android 通知栏（通过 Tauri Kotlin Plugin）
  * - Linux 桌面 MPRIS（通过 Tauri Rust 后端）
  * - Windows/macOS 桌面系统媒体控件（Web Media Session API，由 PlayerState 直接维护）
  *
@@ -24,14 +23,10 @@ function isTauriRuntime() {
   return typeof window !== 'undefined' && !!window.__TAURI_INTERNALS__
 }
 
-function isTauriAndroid() {
-  return isTauriRuntime() && /Android/i.test(navigator.userAgent)
-}
-
 function isTauriLinux() {
   if (!isTauriRuntime()) return false
   const platform = navigator.userAgentData?.platform || navigator.platform || navigator.userAgent
-  return /Linux/i.test(platform) && !/Android/i.test(navigator.userAgent)
+  return /Linux/i.test(platform)
 }
 
 function isTauriWindows() {
@@ -41,7 +36,7 @@ function isTauriWindows() {
 }
 
 function shouldUseNativeBridge() {
-  return isTauriAndroid() || isTauriLinux()
+  return isTauriLinux()
 }
 
 function invokeNative(command, payload, context) {
@@ -64,7 +59,7 @@ export async function initNativeMedia(options = {}) {
   _getPlaybackState = options.getPlaybackState || _getPlaybackState
   _onMediaButton = options.onMediaButton || _onMediaButton
 
-  debugLog('native-media', 'init', { runtime: isTauriRuntime(), android: isTauriAndroid(), linux: isTauriLinux(), windows: isTauriWindows() })
+  debugLog('native-media', 'init', { runtime: isTauriRuntime(), linux: isTauriLinux(), windows: isTauriWindows() })
   if (!isTauriRuntime() || typeof window === 'undefined') return
 
   try {
@@ -74,26 +69,10 @@ export async function initNativeMedia(options = {}) {
     swallowError('NativeMedia.importInvoke', err)
   }
 
-  // Android: 监听通知栏按钮事件
-  if (isTauriAndroid() && _tauriInvoke) {
-    try {
-      const { addPluginListener } = await import('@tauri-apps/api/core')
-      await addPluginListener('nativeMedia', 'media_button', (event) => {
-        const action = event?.payload?.action
-        debugLog('native-media', 'plugin-event-action', { action })
-        if (action && _onMediaButton) {
-          _onMediaButton(action)
-        }
-      })
-    } catch (err) {
-      swallowError('NativeMedia.addPluginListener', err)
-    }
-  }
-
-  // Android 轮询作为通知栏按钮兜底；Linux 轮询 MPRIS 媒体键回调。
+  // Linux 轮询 MPRIS 媒体键回调。
   // Windows/macOS 使用 Web Media Session API，不走 Tauri 原生桥，避免双注册媒体会话。
   if (shouldUseNativeBridge() && _tauriInvoke && !_nativeMediaPollTimer) {
-    const interval = isTauriAndroid() ? PLAYBACK.NATIVE_ANDROID_POLL_INTERVAL : PLAYBACK.NATIVE_POLL_INTERVAL
+    const interval = PLAYBACK.NATIVE_POLL_INTERVAL
     _nativeMediaPollTimer = setInterval(() => {
       pollNativeAction()
     }, interval)
@@ -135,9 +114,7 @@ export function syncNativeMedia() {
 
   const metaChanged = metaKey !== _lastNativeMeta
   const stateChanged = playing !== _lastNativePlaying ||
-    Math.abs(pos - _lastNativePosition) >= (
-      isTauriAndroid() ? PLAYBACK.NATIVE_ANDROID_POSITION_THRESHOLD : PLAYBACK.NATIVE_POSITION_THRESHOLD
-    )
+    Math.abs(pos - _lastNativePosition) >= PLAYBACK.NATIVE_POSITION_THRESHOLD
 
   if (metaChanged || stateChanged) {
     _pendingSyncPayload = { metaChanged, playing, position: pos, duration: dur, meta }

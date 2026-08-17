@@ -17,7 +17,7 @@ import { normalizeImageUrl, coverUrl } from '../utils/image.js'
 import { dbCache } from '../db/cache.js'
 import { getPlayableUrls, fillFallbackUrls } from '../player/url-resolver.js'
 import { getTrialPlaybackMessage } from '../player/trial-message.js'
-import { compactTrack, compactQueue, getNextIndex, getPrevIndex } from '../player/queue.js'
+import { compactTrack, compactQueue, getNextIndex, getPrevIndex, commitNextIndex } from '../player/queue.js'
 import { dbHistory } from '../db/history.js'
 import { initNativeMedia, syncNativeMedia, destroyNativeMedia } from '../player/native-media.js'
 import { createPrefetchManager } from '../player/prefetch.js'
@@ -186,11 +186,13 @@ class PlayerState {
 
     engine.onPlay(() => {
       this.playing = true
+      this._setWebPlaybackState('playing')
       syncNativeMedia()
     })
 
     engine.onPause(() => {
       if (!this.loading || !this._shouldAutoPlay) this.playing = false
+      this._setWebPlaybackState('paused')
       syncNativeMedia()
     })
   }
@@ -200,12 +202,8 @@ class PlayerState {
     if (this._mediaSessionInited) return
     this._mediaSessionInited = true
 
-    const setPlaybackState = (state) => {
-      try { navigator.mediaSession.playbackState = state } catch { /* ignore */ }
-    }
-
-    engine.onPlay(() => setPlaybackState('playing'))
-    engine.onPause(() => setPlaybackState('paused'))
+    // playbackState 的同步在 _setupEngineListeners 的 onPlay/onPause 里，
+    // 不能在这里再 engine.onPlay/onPause —— engine 的订阅是单槽的，会把那边整个覆盖掉。
 
     this._setMediaActionHandler('play', () => { engine.play().catch((err) => swallowError('MediaSession.play', err)) })
     this._setMediaActionHandler('pause', () => { engine.pause() })
@@ -232,6 +230,11 @@ class PlayerState {
     } catch {
       // Some platforms do not support every media action.
     }
+  }
+
+  _setWebPlaybackState(state) {
+    if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return
+    try { navigator.mediaSession.playbackState = state } catch { /* ignore */ }
   }
 
   _syncWebMediaPosition() {
@@ -562,7 +565,11 @@ class PlayerState {
       shuffleState: this.shuffleState,
     })
 
-    this.playTrack(this.queue[idx], idx)
+    const track = this.queue[idx]
+    if (!track) return
+    // 确认切歌后才推进洗牌指针，避免预取的 peek 把这一首跳过
+    commitNextIndex({ mode: this.mode, shuffleState: this.shuffleState })
+    this.playTrack(track, idx)
   }
 
   /**

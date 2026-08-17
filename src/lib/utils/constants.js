@@ -15,12 +15,8 @@ export const PLAYBACK = {
   FALLBACK_WAIT_TIMEOUT: 3000,
   /** 原生媒体位置同步阈值 (s):SMTC/MPRIS 时间轴,0.5s 供逐字歌词同步 */
   NATIVE_POSITION_THRESHOLD: 0.5,
-  /** Android 通知栏位置同步阈值 (s) */
-  NATIVE_ANDROID_POSITION_THRESHOLD: 15,
-  /** Android 按钮轮询间隔 (ms) */
+  /** MPRIS 媒体键轮询间隔 (ms) */
   NATIVE_POLL_INTERVAL: 500,
-  /** Android 按钮兜底轮询间隔 (ms) */
-  NATIVE_ANDROID_POLL_INTERVAL: 1500,
 }
 
 export const LIMITS = {

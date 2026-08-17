@@ -14,11 +14,6 @@ on:
         required: true
         type: boolean
         default: true
-      build_android:
-        description: 'Build Android APKs'
-        required: true
-        type: boolean
-        default: true
       build_linux:
         description: 'Build Linux packages'
         required: true
@@ -42,15 +37,12 @@ env:
   PNPM_CONFIG_FETCH_RETRIES: 5
   PNPM_CONFIG_FETCH_RETRY_MINTIMEOUT: 10000
   PNPM_CONFIG_FETCH_RETRY_MAXTIMEOUT: 60000
-  ANDROID_API_LEVEL: 36
-  ANDROID_BUILD_TOOLS: 36.0.0
-  ANDROID_NDK_VERSION: 29.0.14206865
 
 jobs:
-  web-check:
-    name: Tests and web build
+  version-check:
+    name: Version consistency
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 10
 
     steps:
       - uses: actions/checkout@v5
@@ -70,13 +62,15 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Test and build frontend
-        run: pnpm verify
+      # 单元测试在本地跑（pnpm test），CI 只校验 package.json / Cargo.toml
+      # / tauri.conf.json 三处版本号一致，避免版本对不上还白跑一轮原生构建。
+      - name: Check version consistency
+        run: pnpm check:versions
 
   windows:
     name: Windows installer ${{ matrix.arch }}
-    needs: web-check
-    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.build_windows)
+    needs: version-check
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.build_windows)
     runs-on: windows-2022
     timeout-minutes: 60
     strategy:
@@ -136,290 +130,10 @@ jobs:
           path: src-tauri/target/${{ matrix.target }}/release/bundle/**
           if-no-files-found: error
 
-  android:
-    name: Android APK ${{ matrix.abi }}
-    needs: web-check
-    if: github.event_name == 'pull_request' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.build_android)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 75
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - abi: arm64-v8a
-            rustTarget: aarch64-linux-android
-            tauriTarget: aarch64
-
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Check Android signing secrets
-        id: android_signing
-        env:
-          ANDROID_KEY_BASE64: ${{ secrets.ANDROID_KEY_BASE64 }}
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-          ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
-        run: |
-          set -euo pipefail
-          has_signing=false
-          if [[ -n "$ANDROID_KEY_BASE64" && -n "$ANDROID_KEY_ALIAS" && -n "$ANDROID_KEY_PASSWORD" && -n "$ANDROID_STORE_PASSWORD" ]]; then
-            has_signing=true
-          fi
-
-          if [[ "$has_signing" != true ]]; then
-            echo "::warning::未配置 Android 签名密钥，将构建未签名 (unsigned) APK。"
-            echo "如需可直接安装/上架的正式 APK，请配置 secrets: ANDROID_KEY_BASE64, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD, ANDROID_STORE_PASSWORD"
-          fi
-
-          echo "has_signing=$has_signing" >> "$GITHUB_OUTPUT"
-
-      - name: Require Android signing for tagged releases
-        if: startsWith(github.ref, 'refs/tags/v') && steps.android_signing.outputs.has_signing != 'true'
-        run: |
-          echo "::error::正式发布标签必须配置 Android 签名密钥，拒绝发布 unsigned APK。"
-          exit 1
-
-      - name: Setup Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 17
-
-      - name: Cache Gradle dependencies
-        uses: gradle/actions/setup-gradle@v4
-
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK packages
-        run: |
-          set -euo pipefail
-          retry() {
-            local attempt
-            for attempt in 1 2 3; do
-              "$@" && return 0
-              echo "::warning::Command failed (attempt $attempt/3): $*"
-              sleep $((attempt * 10))
-            done
-            return 1
-          }
-          yes | sdkmanager --licenses >/dev/null || true
-          retry sdkmanager \
-              "platform-tools" \
-              "platforms;android-${ANDROID_API_LEVEL}" \
-              "build-tools;${ANDROID_BUILD_TOOLS}" \
-              "ndk;${ANDROID_NDK_VERSION}"
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: ${{ env.RUST_TOOLCHAIN }}
-          targets: ${{ matrix.rustTarget }}
-
-      - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri -> target
-          key: android-${{ matrix.rustTarget }}
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@v6
-        with:
-          version: ${{ env.PNPM_VERSION }}
-
-      - name: Setup Node
-        uses: actions/setup-node@v5
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Init Android project
-        env:
-          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/${{ env.ANDROID_NDK_VERSION }}
-          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/${{ env.ANDROID_NDK_VERSION }}
-        run: pnpm tauri android init --ci
-
-      - name: Patch Android compatibility
-        env:
-          ANDROID_API_LEVEL: ${{ env.ANDROID_API_LEVEL }}
-        run: |
-          python3 <<'PY'
-          import os
-          import re
-          from pathlib import Path
-
-          api = os.environ['ANDROID_API_LEVEL']
-          gradle = Path('src-tauri/gen/android/app/build.gradle.kts')
-          text = gradle.read_text()
-
-          # 编译/目标 SDK：正则替换，未命中则失败
-          # 注意：不能用 new_text == text 判断命中——值已经正确时 re.sub 也是 no-op，会被误判为未命中
-          if not re.search(r'compileSdk\s*=\s*\d+', text):
-              raise SystemExit('Patch Android compatibility: could not find compileSdk in build.gradle.kts')
-          text = re.sub(r'compileSdk\s*=\s*\d+', f'compileSdk = {api}', text)
-
-          if not re.search(r'targetSdk\s*=\s*\d+', text):
-              raise SystemExit('Patch Android compatibility: could not find targetSdk in build.gradle.kts')
-          text = re.sub(r'targetSdk\s*=\s*\d+', f'targetSdk = {api}', text)
-
-          if not re.search(r'minSdk\s*=\s*\d+', text):
-              raise SystemExit('Patch Android compatibility: could not find minSdk in build.gradle.kts')
-          text = re.sub(r'minSdk\s*=\s*\d+', 'minSdk = 24', text)
-
-          # androidx.media 依赖：未找到 activity-ktx 行则失败
-          if 'androidx.media:media:' not in text:
-              if 'implementation("androidx.activity:activity-ktx:1.10.1")' not in text:
-                  raise SystemExit('Patch Android compatibility: could not find activity-ktx dependency to patch androidx.media')
-              text = text.replace(
-                  'implementation("androidx.activity:activity-ktx:1.10.1")',
-                  'implementation("androidx.activity:activity-ktx:1.10.1")\n    implementation("androidx.media:media:1.7.0")'
-              )
-          gradle.write_text(text)
-
-          manifest = Path('src-tauri/gen/android/app/src/main/AndroidManifest.xml')
-          manifest_text = manifest.read_text()
-          permissions = [
-              'android.permission.INTERNET',
-              'android.permission.FOREGROUND_SERVICE',
-              'android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK',
-              'android.permission.POST_NOTIFICATIONS',
-          ]
-          manifest_opening = '<manifest xmlns:android="http://schemas.android.com/apk/res/android">'
-          for permission in permissions:
-              if permission not in manifest_text:
-                  if manifest_opening not in manifest_text:
-                      raise SystemExit(f'Patch Android compatibility: could not find manifest opening tag to add permission {permission}')
-                  manifest_text = manifest_text.replace(
-                      manifest_opening,
-                      f'{manifest_opening}\n    <uses-permission android:name="{permission}" />',
-                      1,
-                  )
-          service = '''        <service
-              android:name="com.zheting.music.MediaSessionService"
-              android:exported="false"
-              android:foregroundServiceType="mediaPlayback" />'''
-          if 'com.zheting.music.MediaSessionService' not in manifest_text:
-              if '</application>' not in manifest_text:
-                  raise SystemExit('Patch Android compatibility: could not find </application> to add MediaSessionService')
-              manifest_text = manifest_text.replace('</application>', f'{service}\n    </application>', 1)
-          manifest.write_text(manifest_text)
-
-          package_dir = Path('src-tauri/gen/android/app/src/main/java/com/zheting/music')
-          package_dir.mkdir(parents=True, exist_ok=True)
-          for source_name in ['MainActivity.kt', 'MediaSessionPlugin.kt']:
-              source = Path('src-tauri/android-src') / source_name
-              if source.exists():
-                  (package_dir / source_name).write_text(source.read_text())
-              else:
-                  raise SystemExit(f'Patch Android compatibility: source file {source} not found')
-          PY
-
-      - name: Print Android build context
-        run: |
-          set -euo pipefail
-          rustc --version
-          cargo --version
-          pnpm tauri --version
-          ./src-tauri/gen/android/gradlew --version
-          echo "target=${{ matrix.tauriTarget }} rustTarget=${{ matrix.rustTarget }}"
-          sed -n '1,220p' src-tauri/gen/android/app/build.gradle.kts
-          sed -n '1,180p' src-tauri/gen/android/app/src/main/AndroidManifest.xml
-          find src-tauri/gen/android/app/src/main/java/com/zheting/music -maxdepth 1 -type f -print
-
-      - name: Setup Android signing
-        if: steps.android_signing.outputs.has_signing == 'true'
-        env:
-          ANDROID_KEY_BASE64: ${{ secrets.ANDROID_KEY_BASE64 }}
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-          ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
-        run: |
-          set -euo pipefail
-          base64 --decode <<< "$ANDROID_KEY_BASE64" > "$RUNNER_TEMP/zheting-release.jks"
-          printf '%s\n' \
-            "keyAlias=$ANDROID_KEY_ALIAS" \
-            "keyPassword=$ANDROID_KEY_PASSWORD" \
-            "storePassword=$ANDROID_STORE_PASSWORD" \
-            "storeFile=$RUNNER_TEMP/zheting-release.jks" \
-            > src-tauri/gen/android/keystore.properties
-
-      - name: Patch Android release signing
-        if: steps.android_signing.outputs.has_signing == 'true'
-        run: |
-          python3 <<'PY'
-          from pathlib import Path
-          import re
-
-          path = Path('src-tauri/gen/android/app/build.gradle.kts')
-          text = path.read_text()
-
-          imports = []
-          if 'import java.io.FileInputStream' not in text:
-              imports.append('import java.io.FileInputStream')
-          if 'import java.util.Properties' not in text:
-              imports.append('import java.util.Properties')
-          if imports:
-              text = '\n'.join(imports) + '\n' + text
-
-          if 'signingConfigs.create("release")' not in text:
-              marker = 'android {'
-              signing = '''android {
-              signingConfigs {
-                  create("release") {
-                      val keystorePropertiesFile = rootProject.file("keystore.properties")
-                      val keystoreProperties = Properties()
-                      if (keystorePropertiesFile.exists()) {
-                          keystoreProperties.load(FileInputStream(keystorePropertiesFile))
-                      }
-
-                      keyAlias = keystoreProperties["keyAlias"] as String
-                      keyPassword = keystoreProperties["keyPassword"] as String
-                      storeFile = file(keystoreProperties["storeFile"] as String)
-                      storePassword = keystoreProperties["storePassword"] as String
-                  }
-              }
-          '''
-              if marker not in text:
-                  raise SystemExit('Could not find android block in generated build.gradle.kts')
-              text = text.replace(marker, signing, 1)
-
-          if 'signingConfig = signingConfigs.getByName("release")' not in text:
-              pattern = r'(getByName\("release"\)\s*\{)'
-              if not re.search(pattern, text):
-                  raise SystemExit('Could not find release buildType in generated build.gradle.kts')
-              text = re.sub(pattern, '\\1\n            signingConfig = signingConfigs.getByName("release")', text, count=1)
-
-          path.write_text(text)
-          PY
-
-      - name: Build Android APK
-        env:
-          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/${{ env.ANDROID_NDK_VERSION }}
-          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/${{ env.ANDROID_NDK_VERSION }}
-        run: pnpm tauri android build --ci --verbose --apk --split-per-abi --target ${{ matrix.tauriTarget }}
-
-      - name: Verify Android APK signature
-        if: steps.android_signing.outputs.has_signing == 'true'
-        run: |
-          set -euo pipefail
-          find src-tauri/gen/android/app/build/outputs/apk -name "*.apk" -print -exec apksigner verify --verbose {} \;
-
-      - name: Upload Android APK
-        uses: actions/upload-artifact@v5
-        with:
-          name: zheting-android-${{ matrix.abi }}
-          path: src-tauri/gen/android/app/build/outputs/apk/**/*.apk
-          if-no-files-found: error
-
   linux:
     name: Linux packages
-    needs: web-check
-    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.build_linux)
+    needs: version-check
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.build_linux)
     runs-on: ubuntu-24.04
     timeout-minutes: 60
 
@@ -474,7 +188,7 @@ jobs:
   release:
     name: Publish GitHub Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [windows, android, linux]
+    needs: [windows, linux]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -518,4 +232,3 @@ jobs:
             artifacts/**/*.exe
             artifacts/**/*.deb
             artifacts/**/*.rpm
-            artifacts/**/*.apk

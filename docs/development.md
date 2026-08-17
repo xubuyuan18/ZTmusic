@@ -165,14 +165,20 @@ Console 输出 `[play-url:result]` / `[playback:xxx]` 日志。
 ```bash
 pnpm build                # 前端构建
 pnpm tauri:build          # 桌面端安装包（当前平台）
-pnpm tauri android build --apk --target aarch64   # Android APK
 ```
 
-**CI**（`.github/workflows/`）：
-- `build.yml`：push main / tag `v*` / PR 触发，并行构建 Windows / Linux / Android / Web，tag 时发布 GitHub Release
-- `release-prepare.yml`：手动触发，自动算版本号 → 更新 package.json / Cargo.toml / CHANGELOG → 打 tag → push（commit 带 `[skip ci]` 避免双触发）
+**Windows + gnu 工具链的前提**：`tauri-winres` 编译 Windows 资源（图标、版本信息）时要调 `windres`，rustup 自带的 self-contained mingw 里**没有**它。MSYS2 有，但 Git Bash 的 PATH 不含 MSYS2 的 mingw64 目录，所以裸跑 `cargo check` 会在 build script 阶段 panic（`Couldn't to execute windres`）。加进 PATH 即可，不用装东西：
 
-Android 签名密钥配在仓库 Secrets（`ANDROID_KEY_BASE64` / `ANDROID_KEY_ALIAS` / `ANDROID_KEY_PASSWORD` / `ANDROID_STORE_PASSWORD`），未配置时构建 unsigned APK。
+```bash
+export PATH="$HOME/.cargo/bin:/c/msys64/mingw64/bin:$PATH"
+cargo check                        # 在 src-tauri/ 下跑
+```
+
+注意 Windows 主机只编译 `cfg(target_os = "windows")` 分支，`linux_mpris` 那条路径要靠 CI 的 linux job 验证。
+
+**CI**（`.github/workflows/`）：
+- `build.yml`：PR / tag `v*` 触发原生构建（Windows `.msi` + Linux `.deb/.rpm`），tag 时发布 GitHub Release。前置的 `version-check` job 只校验三处版本号一致 —— **单元测试不在 CI 跑，推送前本地 `pnpm test` 自己过一遍**。
+- `release-prepare.yml`：手动触发，跑 `pnpm verify`（含测试）→ 自动算版本号 → 更新 package.json / Cargo.toml / CHANGELOG → 打 tag → push（commit 带 `[skip ci]` 避免双触发）
 
 ---
 

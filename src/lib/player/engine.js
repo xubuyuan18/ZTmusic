@@ -194,6 +194,12 @@ class AudioEngine {
   get paused() { return this.audio.paused }
   get src() { return this.audio.src }
 
+  // ponytail: 每个事件只有一个回调槽 —— 重复调用 onX 会静默覆盖前一个。
+  // 目前唯一的消费者是 PlayerState，够用。如果将来有第二个模块要监听
+  // engine 事件，改成数组订阅 + _emit()，别在两处各调一次 onX。
+  // ponytail: 每个事件只有一个回调槽，重复调用 onXxx 会静默覆盖前一个。
+  // 已知上限：只允许单一消费者（目前是 PlayerState）。若将来有第二个模块要监听
+  // 播放事件，必须先把这些槽改成订阅者数组 + _emit，否则又会出现覆盖 bug。
   onTimeUpdate(fn) { this._onTimeUpdate = fn }
   onEnded(fn) { this._onEnded = fn }
   onLoadStart(fn) { this._onLoadStart = fn }

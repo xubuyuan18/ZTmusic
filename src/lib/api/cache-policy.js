@@ -1,5 +1,5 @@
 import { dbCache } from '../db/cache.js'
-export { getApiCacheTtl } from './cache-ttl.js'
+export { getApiCacheTtl, isCacheableResponse } from './cache-ttl.js'
 
 const MAX_MEMORY_API_ENTRIES = 200
 const memoryApiCache = new Map()

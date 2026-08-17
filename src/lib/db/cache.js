@@ -28,7 +28,6 @@ import { dbApiClear, dbApiRead, dbApiWrite, dbClearAll, dbGetStats, dbUrlGet } f
 
 // ==== 降级前缀 ====
 const URL_CACHE_PREFIX = 'db_fallback_url_'  // localStorage fallback for song URLs
-const URL_CACHE_TTL = 12 * 60 * 60 * 1000  // 歌曲 URL 过期时间：12 小时
 
 function isAvailable() {
   return isReady() && getDB()

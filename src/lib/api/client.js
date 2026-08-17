@@ -3,6 +3,7 @@ import {
   createApiCacheKey,
   getApiCacheStats,
   getApiCacheTtl,
+  isCacheableResponse,
   readApiCache,
   writeApiCache,
 } from './cache-policy.js'
@@ -114,7 +115,7 @@ async function request(endpoint, params = {}, method = 'GET', body = null, optio
           },
         })
         if (options.saveCookie !== false) apiSession.saveCookieFromResponse(result.data, result.cookie)
-        writeApiCache(cacheKey, result.data, cacheTtl).catch(() => {})
+        if (isCacheableResponse(result.data)) writeApiCache(cacheKey, result.data, cacheTtl).catch(() => {})
         return result.data
       } catch (error) {
         if (attempt < maxTauriRetries && isProxyBadGateway(error)) {
@@ -162,7 +163,7 @@ async function request(endpoint, params = {}, method = 'GET', body = null, optio
         message: res.ok ? `API response not JSON: ${res.status}` : `API error: ${res.status}`,
       }))
       if (options.saveCookie !== false) apiSession.saveCookieFromResponse(data)
-      writeApiCache(cacheKey, data, cacheTtl).catch(() => {})
+      if (isCacheableResponse(data)) writeApiCache(cacheKey, data, cacheTtl).catch(() => {})
       return data
     } catch (error) {
       if (attempt < maxFetchRetries && isProxyBadGateway(error)) {

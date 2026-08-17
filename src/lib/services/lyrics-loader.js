@@ -65,4 +65,3 @@ const sharedLyricsLoader = createLyricsLoader((id) => ncm.lyric(id))
 
 export const loadLyrics = (id, options) => sharedLyricsLoader.load(id, options)
 export const getCachedLyrics = (id) => sharedLyricsLoader.get(id)
-export const clearLyricsCache = (id) => sharedLyricsLoader.clear(id)

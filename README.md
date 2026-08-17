@@ -1,6 +1,6 @@
 # ZTmusic（哲听）
 
-一个简洁、安静的网易云音乐第三方客户端，专注于听歌体验。基于 Svelte 5 + Tauri 2，可运行在 Windows、Linux、Android 和 Web 上。
+一个简洁、安静的网易云音乐第三方客户端，专注于听歌体验。基于 Svelte 5 + Tauri 2，可运行在 Windows、Linux 和 Web 上。
 
 > ⚠️ 本项目仅供个人学习与技术交流。音乐数据来自第三方 API，版权归网易云音乐及各版权方。请勿用于商业用途。
 
@@ -14,7 +14,7 @@
 
 哲听是一个干净、轻量的跨平台音乐客户端。没有广告，也没有喧宾夺主的社交功能，只想让听歌回归简单。
 
-最初是想给自己做一个安静的听歌工具，后来顺手支持了 Android 和 Linux。API 基于 [NeteaseCloudMusicApi Enhanced](https://github.com/NeteaseCloudMusicApiEnhanced)，默认后端是 `https://music.xubuyuan.top`。
+最初是想给自己做一个安静的听歌工具，后来顺手支持了 Linux。API 基于 [NeteaseCloudMusicApi Enhanced](https://github.com/NeteaseCloudMusicApiEnhanced)，默认后端是 `https://music.xubuyuan.top`。
 
 ## 能干什么
 
@@ -32,10 +32,11 @@
 |---|---|---|
 | Windows | `.exe`（NSIS） | ✅ |
 | Linux | `.deb` / `.rpm` | ✅ |
-| Android | `.apk` | ✅ |
 | Web | 浏览器直开 | ✅ |
 
-> macOS / iOS 没有预构建包，可以自己跑 `pnpm tauri:build` 编。
+> macOS 没有预构建包，可以自己跑 `pnpm tauri:build` 编。
+>
+> Android 端已于 2026-08 放弃，不再构建 `.apk`。手机浏览器打开 Web 版仍是移动端布局。
 
 ## 快速开始
 
@@ -59,7 +60,7 @@ pnpm test                 # 在隔离的 Node.js 进程中运行全部自检脚�
 | 层级 | 技术 |
 |---|---|
 | 前端 | Svelte 5 + Vite |
-| 桌面 / 移动 | Tauri 2 + Rust |
+| 桌面 | Tauri 2 + Rust |
 | 音频 | HTML5 Audio（双缓冲预加载） |
 | 本地存储 | IndexedDB / SQLocal |
 | API | NeteaseCloudMusicApi Enhanced |
@@ -72,23 +73,21 @@ pnpm test                 # 在隔离的 Node.js 进程中运行全部自检脚�
 ZTmusic/
 ├── src/                  # 前端源码（Svelte 5）
 │   ├── App.svelte         # 根组件：路由、布局、overlay
-│   ├── lib/
-│   │   ├── api/           # API 客户端 + 缓存策略
-│   │   ├── components/    # UI 组件（播放器、overlay、侧栏……）
-│   │   ├── pages/         # 页面（PC / 移动分开）
-│   │   ├── player/        # 音频引擎 + fallback 链
-│   │   ├── stores/        # 状态管理（auth / player / router）
-│   │   ├── services/      # 数据加载
-│   │   └── utils/         # 工具函数
-│   └── assets/
+│   └── lib/
+│       ├── api/           # API 客户端 + 缓存策略
+│       ├── components/    # UI 组件（播放器、overlay、侧栏……）
+│       ├── pages/         # 页面（PC / 移动分开）
+│       ├── player/        # 音频引擎 + fallback 链
+│       ├── stores/        # 状态管理（auth / player / router）
+│       ├── services/      # 数据加载
+│       └── utils/         # 工具函数
 ├── src-tauri/            # Tauri / Rust
 │   ├── src/               # Rust 端：ncm_request IPC、SMTC、MPRIS
-│   ├── android-src/       # Android 原生插件
 │   ├── capabilities/      # Tauri 权限配置
 │   └── icons/
 ├── public/               # 静态资源（SVG 图标）
 ├── docs/                 # 开发文档
-├── .github/workflows/    # CI：build（四端）+ prepare-release
+├── .github/workflows/    # CI：build（版本校验 + Windows / Linux 安装包）+ prepare-release
 ├── index.html
 ├── vite.config.js        # Vite + /ncm-api 代理
 ├── svelte.config.js
@@ -101,16 +100,14 @@ ZTmusic/
 
 ## 构建与发版
 
-本地构建：`pnpm tauri:build`（桌面端）或 `pnpm tauri android build --apk --target aarch64`（Android）。
+本地构建：`pnpm tauri:build`（当前平台安装包）。
 
 发版走 GitHub Actions：
 
 1. 手动触发 **Prepare Release** workflow，选版本号策略（auto / patch / minor / major）
 2. 它会自动：算下一版本号 → 更新 package.json / Cargo.toml / CHANGELOG.md → 打 tag → push
-3. push tag（`v*`）触发 **Build Installers**，并行构建 Windows / Linux / Android / Web
+3. push tag（`v*`）触发 **Build Installers**，并行构建 Windows / Linux / Web
 4. 构建完自动发布到 GitHub Releases，release notes 从 CHANGELOG 抽
-
-Android 签名密钥配在仓库 Secrets（`ANDROID_KEY_BASE64` / `ANDROID_KEY_ALIAS` / `ANDROID_KEY_PASSWORD` / `ANDROID_STORE_PASSWORD`），没配的话会构建 unsigned APK。
 
 详细的架构说明、API 链路、调试技巧见 [`docs/development.md`](docs/development.md)。
 

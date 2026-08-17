@@ -83,8 +83,3 @@ export async function initDB() {
 
 export function getDB() { return _ready ? _db : null }
 export function isReady() { return _ready }
-export function isTauri() { return isTauriRuntime() }
-export function getFallbackReason() {
-  if (!_errored) return null
-  return getStorage('db_fallback_reason', 'unknown')
-}

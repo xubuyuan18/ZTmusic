@@ -38,3 +38,15 @@ export function getApiCacheTtl(endpoint, method, options = {}) {
   if (method !== 'GET' || options.cache === false) return 0
   return options.cacheTtl ?? CACHE_TTL[endpoint] ?? 0
 }
+
+/**
+ * 响应能不能进缓存。
+ *
+ * NCM API 把成败放在 body 的 code 里，HTTP 层永远 200，所以失败响应长得跟成功的一样，
+ * 会被原样缓存。配上 /lyric 的 7 天 TTL，代理抽一次 502 就等于一周没歌词。
+ * 没有 code 字段的响应（部分接口直接返回数组/对象）保持原行为，照缓存。
+ */
+export function isCacheableResponse(data) {
+  if (!data || typeof data !== 'object') return false
+  return data.code === undefined || data.code === 200
+}

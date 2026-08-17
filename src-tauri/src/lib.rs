@@ -9,8 +9,6 @@ mod pending_action;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-#[cfg(target_os = "android")]
-use std::sync::Mutex;
 use tauri::Manager;
 
 pub(crate) const API_TIMEOUT_SECS: u64 = 15;
@@ -22,8 +20,6 @@ pub(crate) struct AppState {
 }
 
 pub(crate) struct NativeMediaState {
-    #[cfg(target_os = "android")]
-    pub(crate) handle: Mutex<Option<tauri::plugin::PluginHandle<tauri::Wry>>>,
     #[cfg(target_os = "linux")]
     pub(crate) mpris: linux_mpris::LinuxMprisState,
     #[cfg(target_os = "windows")]
@@ -47,25 +43,6 @@ pub(crate) struct NcmRequest {
 pub(crate) struct NcmResponse {
     pub(crate) data: Value,
     pub(crate) cookie: String,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-#[cfg_attr(not(target_os = "android"), allow(dead_code))]
-pub(crate) struct NativeMetadataPayload {
-    pub(crate) title: String,
-    pub(crate) artist: String,
-    pub(crate) cover_url: String,
-    pub(crate) duration: f64,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-#[cfg_attr(not(target_os = "android"), allow(dead_code))]
-pub(crate) struct NativePlaybackPayload {
-    pub(crate) playing: bool,
-    pub(crate) position: f64,
-    pub(crate) duration: f64,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -99,15 +76,6 @@ fn dev_report_client_error(log: ClientErrorLog) {
 fn native_media_plugin() -> tauri::plugin::TauriPlugin<tauri::Wry> {
     tauri::plugin::Builder::new(NATIVE_MEDIA_PLUGIN_NAME)
         .setup(|app, api| {
-            #[cfg(target_os = "android")]
-            {
-                let handle = api
-                    .register_android_plugin("com.zheting.music", "MediaSessionPlugin")?;
-                app.manage(NativeMediaState {
-                    handle: Mutex::new(Some(handle)),
-                });
-            }
-
             #[cfg(target_os = "linux")]
             {
                 let _ = api;
@@ -124,7 +92,7 @@ fn native_media_plugin() -> tauri::plugin::TauriPlugin<tauri::Wry> {
                 });
             }
 
-            #[cfg(not(any(target_os = "android", target_os = "linux", target_os = "windows")))]
+            #[cfg(not(any(target_os = "linux", target_os = "windows")))]
             {
                 let _ = api;
                 app.manage(NativeMediaState {});
@@ -135,7 +103,6 @@ fn native_media_plugin() -> tauri::plugin::TauriPlugin<tauri::Wry> {
         .build()
 }
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(API_TIMEOUT_SECS))

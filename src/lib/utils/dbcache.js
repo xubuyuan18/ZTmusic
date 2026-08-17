@@ -11,7 +11,6 @@ const DB_NAME = 'zheting_cache'
 const DB_VERSION = 3
 const STORE_API = 'api_cache'
 const STORE_URL = 'song_urls'
-const MAX_URL_ENTRIES = 500
 const DB_TIMEOUT = 3000 // 3s timeout for IndexedDB operations
 const URL_CACHE_TTL = 12 * 60 * 60 * 1000  // 歌曲 URL 过期时间：12 小时
 let _idbFailed = false // fast-failure flag
@@ -133,52 +132,6 @@ export async function dbUrlGet(id) {
       }
       req.onerror = () => resolve(null)
     } catch { resolve(null) }
-  })
-}
-
-export async function dbUrlSet(id, urls, ttlMs = 60 * 60 * 1000) {
-  if (!id || !urls?.length) return
-  let db
-  try { db = await openDB() } catch { return }
-  return new Promise((resolve) => {
-    try {
-      const expiresAt = Date.now() + Math.max(0, ttlMs)
-      const tx = db.transaction(STORE_URL, 'readwrite')
-      tx.objectStore(STORE_URL).put({ id: String(id), urls, expiresAt, savedAt: Date.now() })
-      tx.oncomplete = () => { trimUrlCache().catch(() => {}); resolve(true) }
-      tx.onerror = () => resolve(false)
-    } catch { resolve(false) }
-  })
-}
-
-function trimUrlCache() {
-  return new Promise((resolve) => {
-    openDB().then((db) => {
-      let tx
-      try {
-        tx = db.transaction(STORE_URL, 'readwrite')
-      } catch { return resolve() }
-      const store = tx.objectStore(STORE_URL)
-      const countReq = store.count()
-      // 全程在同一事务内以回调排队，避免 await 让事务提前 auto-commit
-      countReq.onsuccess = () => {
-        const count = countReq.result
-        if (count <= MAX_URL_ENTRIES) return
-        const excess = count - MAX_URL_ENTRIES
-        let deleted = 0
-        const cursorReq = store.index('savedAt').openCursor(IDBKeyRange.lowerBound(0))
-        cursorReq.onsuccess = (e) => {
-          const cursor = e.target.result
-          if (!cursor || deleted >= excess) return
-          cursor.delete()
-          deleted++
-          cursor.continue()
-        }
-      }
-      tx.oncomplete = () => resolve()
-      tx.onerror = () => resolve()
-      tx.onabort = () => resolve()
-    }, () => resolve())
   })
 }
 

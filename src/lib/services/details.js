@@ -65,23 +65,6 @@ export async function loadPlaylistDetail(ncm, extractColor, id, onProgress) {
   return { detail, heroColor }
 }
 
-export async function completePlaylistTracks(ncm, detail) {
-  if (!detail?.tracksPartial || !detail?.trackIds?.length) return detail
-  const fallbackMap = new Map((detail.tracks || []).map(track => [track.id, track]))
-  const songs = await loadSongsByIds(ncm, detail.trackIds.map(track => track.id))
-  const songMap = new Map(songs.map(song => [song.id, song]))
-  const tracks = detail.trackIds.map((track, index) => {
-    const detailTrack = songMap.get(track.id) || fallbackMap.get(track.id)
-    if (!detailTrack) return null
-    return {
-      ...detailTrack,
-      addTime: track.at || track.addTime || track.time || detailTrack.addTime || 0,
-      playlistIndex: index,
-    }
-  }).filter(Boolean)
-  return { ...detail, tracks, tracksPartial: false }
-}
-
 export async function loadAlbumDetail(ncm, extractColor, id) {
   const response = await ncm.album(id)
   const album = response?.album || {}

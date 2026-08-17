@@ -257,5 +257,4 @@ jobs:
           git push --atomic origin HEAD:main "$TAG"
           gh workflow run build.yml --ref "$TAG" \
             -f build_windows=true \
-            -f build_android=true \
             -f build_linux=true

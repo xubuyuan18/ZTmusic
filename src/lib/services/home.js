@@ -11,18 +11,6 @@ function withPlayCountText(playlist) {
   return { ...playlist, playCountText: playlist.playCount ? `${formatPlayCount(playlist.playCount)} 次播放` : '歌单' }
 }
 
-export async function loadLibraryData(ncm, user) {
-  const uid = user?.userId || user?.id
-  if (!uid) return []
-  try {
-    const plRes = await ncm.userPlaylist(uid).catch(() => ({ playlist: [] }))
-    const allPlaylists = (plRes.playlist || []).slice(0, 100)
-    return allPlaylists.filter(playlist => playlist.creator?.userId !== uid && playlist.specialType !== 5).map(normalizePlaylist).filter(Boolean)
-  } catch {
-    return []
-  }
-}
-
 export async function loadMobileLibraryData(ncm, user, options = {}) {
   const uid = user?.userId || user?.id
   if (!uid) return { profile: null, stats: [], createdPlaylists: [], savedPlaylists: [], likedPlaylist: null }

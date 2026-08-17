@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目简介
 
-**ZTmusic（哲听）** —— 一个简洁、安静的网易云音乐第三方跨平台桌面客户端。基于 Svelte 5 + Tauri 2 构建，支持 Windows / Linux / Android / Web。
+**ZTmusic（哲听）** —— 一个简洁、安静的网易云音乐第三方跨平台桌面客户端。基于 Svelte 5 + Tauri 2 构建，支持 Windows / Linux / Web。
 
 > ⚠️ 仅供个人学习与技术交流，音乐数据来自第三方 API，版权归网易云音乐及版权方。
 
@@ -17,7 +17,7 @@ pnpm tauri:dev            # 桌面端开发（Tauri）
 pnpm build                # 前端构建
 pnpm tauri:build          # 构建当前平台安装包
 pnpm test                 # 运行全部单元测试
-pnpm verify               # = pnpm test + pnpm build
+pnpm verify               # = pnpm check:versions + pnpm test + pnpm build
 ```
 
 **运行单个测试**：本项目没有测试框架，测试是独立的 `node` 脚本，直接运行单个文件即可：
@@ -35,7 +35,7 @@ node src/lib/player/fallback.test.js
 | 层级 | 技术 |
 |---|---|
 | 前端 | Svelte 5 + Vite 8 |
-| 桌面/移动端 | Tauri 2 + Rust |
+| 桌面端 | Tauri 2 + Rust |
 | 音频 | HTML5 Audio（双缓冲预加载） |
 | 本地存储 | IndexedDB / SQLocal |
 | API | NeteaseCloudMusicApi Enhanced |
@@ -52,7 +52,7 @@ node src/lib/player/fallback.test.js
 - **i18n**：`src/lib/i18n/`（`zh.js` / `en.js`）。
 - **持久化**：`src/lib/db/`（IndexedDB 缓存、播放历史、设置）。
 
-### 桌面/移动原生（`src-tauri/`）
+### 桌面原生（`src-tauri/`）
 
 Rust 端，关键模块：
 - `lib.rs` / `api.rs`：处理前端 `ncm_request` IPC 调用（reqwest 转发）
@@ -69,7 +69,7 @@ localStorage.setItem('debug_playback', 'true')  // Console 输出 [play-url:resu
 
 播放失败排查：确认 `index.html` 有 `<meta name="referrer" content="no-referrer">`；音频 URL 需 HTTPS（`normalizePlayUrl()` 自动转）；Network 面板查 403/404；`api_cookie` 权限。
 
-## 开发约定（来自 AGENTS.md）
+## 开发约定（来自 [`.github/copilot-instructions.md`](.github/copilot-instructions.md)）
 
 项目采用 **"ponytail" 懒Senior 模式**：
 
@@ -84,4 +84,4 @@ localStorage.setItem('debug_playback', 'true')  // Console 输出 [play-url:resu
 ## 文档
 
 - 详细架构与调试：[`docs/development.md`](docs/development.md)
-- 发版流程：GitHub Actions（`release-prepare.yml` → 打 tag → `build.yml` 构建 `.deb/.rpm/.msi/.apk`）
+- 发版流程：GitHub Actions（`release-prepare.yml` → 打 tag → `build.yml` 构建 `.deb/.rpm/.msi`）
